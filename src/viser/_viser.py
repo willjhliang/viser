@@ -26,6 +26,7 @@ from ._notification_handle import NotificationHandle, _NotificationHandleState
 from ._scene_api import SceneApi, cast_vector
 from ._threadpool_exceptions import print_threadpool_errors
 from ._tunnel import ViserTunnel
+from ._viewport import ViewportApi
 from .infra._infra import StateSerializer
 
 
@@ -877,6 +878,9 @@ class ViserServer(DeprecatedAttributeShim if not TYPE_CHECKING else object):
             self, thread_executor=self._thread_executor, event_loop=self._event_loop
         )
         """Handle for interacting with the GUI."""
+
+        self.viewport: ViewportApi = ViewportApi(self)
+        """Handle for native viewport panes."""
 
         server.register_handler(
             _messages.ShareUrlDisconnect,

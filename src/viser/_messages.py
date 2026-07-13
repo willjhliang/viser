@@ -168,7 +168,9 @@ LabelAnchor = Literal[
 
 
 # Entity lifecycle markers. See architecture_hardening.md for design rationale.
-EntityType: TypeAlias = Literal["gui", "scene", "command", "notification", "modal"]
+EntityType: TypeAlias = Literal[
+    "gui", "scene", "command", "notification", "modal", "viewport"
+]
 """Kinds of removable entities in the protocol."""
 
 LifecyclePhase: TypeAlias = Literal["create", "update_dict", "update_simple", "remove"]
@@ -184,9 +186,10 @@ purged when their entity is removed:
   (``{entity}:{id}:update:{ClassName}``), so e.g. position and orientation stay
   in separate slots."""
 
-EntityIdField: TypeAlias = Literal["uuid", "name"]
+EntityIdField: TypeAlias = Literal["uuid", "name", "pane_id"]
 """Name of the dataclass field that carries the entity id. ``"uuid"`` for
-GUI/command/notification/modal; ``"name"`` for scene nodes."""
+GUI/command/notification/modal; ``"name"`` for scene nodes; and ``"pane_id"``
+for viewport panes."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2007,6 +2010,62 @@ class SceneNodeUpdateMessage(
     name: str
     updates: Dict[str, Any]
     """Mapping from property name to new value."""
+
+
+@dataclasses.dataclass
+class ViewportImageProps:
+    """Properties for a native image viewport pane."""
+
+    _data: bytes
+    _format: Literal["jpeg", "png"]
+    title: str
+    visible: bool
+    fit: Literal["contain", "cover", "fill"]
+
+
+@dataclasses.dataclass
+class ViewportImageMessage(
+    Message,
+    entity=EntityLifecycle("viewport", "create", "pane_id"),
+    include_in_scene_serialization=True,
+):
+    """Create a native image pane in the viewport workspace."""
+
+    pane_id: str
+    props: ViewportImageProps
+    placement: Literal["left", "right", "top", "bottom"]
+    relative_to: str
+
+
+@dataclasses.dataclass
+class ViewportPaneUpdateMessage(
+    Message,
+    entity=EntityLifecycle("viewport", "update_dict", "pane_id"),
+    include_in_scene_serialization=True,
+):
+    """Update one or more properties of a viewport pane."""
+
+    pane_id: str
+    updates: Dict[str, Any]
+
+
+@dataclasses.dataclass
+class ViewportPaneRemoveMessage(
+    Message,
+    entity=EntityLifecycle("viewport", "remove", "pane_id"),
+    include_in_scene_serialization=True,
+):
+    """Remove a viewport pane."""
+
+    pane_id: str
+
+
+@dataclasses.dataclass
+class ViewportPaneSnapshotMessage(Message, include_in_scene_serialization=True):
+    """Authoritative pane IDs used to reconcile browser-persisted layouts."""
+
+    # The permanent scene pane is implicit and deliberately excluded.
+    pane_ids: Tuple[str, ...]
 
 
 @dataclasses.dataclass
