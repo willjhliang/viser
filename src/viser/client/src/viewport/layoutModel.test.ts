@@ -130,6 +130,32 @@ describe("reconcileViewportLayout", () => {
     ).toEqual(["scene", "a"]);
   });
 
+  it("omits a hidden scene but retains it as the empty fallback", () => {
+    const sceneAndImage = layout(
+      split("row", [pane("scene"), pane("image")]),
+    );
+    expect(
+      collectViewportPaneIds(
+        reconcileViewportLayout(
+          sceneAndImage,
+          ["image"],
+          VIEWPORT_SCENE_PANE_ID,
+          false,
+        ),
+      ),
+    ).toEqual(["image"]);
+    expect(
+      collectViewportPaneIds(
+        reconcileViewportLayout(
+          layout(pane("scene")),
+          [],
+          VIEWPORT_SCENE_PANE_ID,
+          false,
+        ),
+      ),
+    ).toEqual(["scene"]);
+  });
+
   it("preserves nested same-axis splits from serialized layouts", () => {
     const output = reconcileViewportLayout(
       {

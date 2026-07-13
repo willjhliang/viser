@@ -163,13 +163,35 @@ class ViewportApi:
     """Interface for native panes in the browser-managed viewport workspace."""
 
     scene_pane_id: Literal["scene"] = "scene"
-    """Stable identifier for the permanently available 3D scene pane."""
+    """Stable identifier for the built-in 3D scene pane."""
 
     def __init__(self, owner: ViserServer) -> None:
         self._lock = threading.RLock()
         self._websock_interface = owner._websock_server
         self._handle_from_pane_id: dict[str, ViewportImageHandle] = {}
+        self._scene_visible = True
         self._queue_snapshot()
+
+    @property
+    def scene_visible(self) -> bool:
+        """Whether the 3D scene pane is shown when 2D panes are available."""
+
+        return self._scene_visible
+
+    @scene_visible.setter
+    def scene_visible(self, value: bool) -> None:
+        if not isinstance(value, bool):
+            raise TypeError("Viewport scene visibility must be a boolean.")
+        with self._lock:
+            if value == self._scene_visible:
+                return
+            self._scene_visible = value
+            self._websock_interface.queue_message(
+                _messages.ViewportPaneUpdateMessage(
+                    pane_id=self.scene_pane_id,
+                    updates={"visible": value},
+                )
+            )
 
     def _known_pane_ids(self) -> tuple[str, ...]:
         """Return pane IDs in declaration order, excluding the scene pane."""

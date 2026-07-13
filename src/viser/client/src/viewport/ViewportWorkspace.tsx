@@ -655,6 +655,14 @@ export function ViewportWorkspace({
     displayLayout.root.pane_id === VIEWPORT_SCENE_PANE_ID;
   const canvasWidth = grid.columns * grid.cellSize;
   const canvasHeight = grid.rows * grid.cellSize;
+  const visiblePaneIds = collectViewportPaneIds(displayLayout);
+  const sceneIsVisible = visiblePaneIds.includes(VIEWPORT_SCENE_PANE_ID);
+  // Message handling is synchronized to the Three.js render loop. Keep the
+  // scene host mounted without reserving workspace space so hiding the scene
+  // cannot stall later websocket updates or discard renderer/camera state.
+  const mountedPaneIds = sceneIsVisible
+    ? visiblePaneIds
+    : [...visiblePaneIds, VIEWPORT_SCENE_PANE_ID];
 
   return (
     <div
@@ -683,9 +691,11 @@ export function ViewportWorkspace({
           background: "var(--mantine-color-default-border)",
         }}
       >
-        {collectViewportPaneIds(displayLayout).map((paneId) => {
-          const rect = geometry.panes[paneId];
-          if (rect === undefined) return null;
+        {mountedPaneIds.map((paneId) => {
+          const rect = geometry.panes[paneId] ?? null;
+          if (rect === null && paneId !== VIEWPORT_SCENE_PANE_ID) {
+            return null;
+          }
           return (
             <ViewportPaneHost
               key={paneId}
@@ -806,7 +816,7 @@ function ViewportPaneHost({
   onHeaderKeyDown,
 }: {
   paneId: string;
-  rect: GridRect;
+  rect: GridRect | null;
   cellSize: number;
   geometryTransition: string | undefined;
   isDragging: boolean;
@@ -831,25 +841,38 @@ function ViewportPaneHost({
   const [isHovered, setIsHovered] = React.useState(false);
   if (pane === undefined) return null;
 
+  const isHiddenSceneHost = rect === null;
   const title = paneTitle(pane);
   return (
     <section
-      data-viewport-pane={paneId}
+      data-viewport-pane={isHiddenSceneHost ? undefined : paneId}
+      aria-hidden={isHiddenSceneHost || undefined}
       onPointerEnter={() => setIsHovered(true)}
       onPointerLeave={() => setIsHovered(false)}
       style={{
-        ...panePositionStyle(rect, cellSize),
+        ...(isHiddenSceneHost
+          ? {
+              position: "absolute" as const,
+              left: 0,
+              top: 0,
+              width: 1,
+              height: 1,
+              visibility: "hidden" as const,
+              pointerEvents: "none" as const,
+            }
+          : panePositionStyle(rect, cellSize)),
         minWidth: 0,
         minHeight: 0,
         overflow: "hidden",
         boxSizing: "border-box",
-        border: hideChrome
+        border: hideChrome || isHiddenSceneHost
           ? undefined
           : `${PANE_BORDER_SIZE_PX}px solid var(--mantine-color-default-border)`,
-        borderRadius: hideChrome ? 0 : "var(--mantine-radius-sm)",
+        borderRadius:
+          hideChrome || isHiddenSceneHost ? 0 : "var(--mantine-radius-sm)",
         background: "var(--mantine-color-body)",
         isolation: "isolate",
-        transition: geometryTransition,
+        transition: isHiddenSceneHost ? undefined : geometryTransition,
       }}
     >
       <div
@@ -865,7 +888,7 @@ function ViewportPaneHost({
         <ViewportPaneRenderer pane={pane} sceneContent={sceneContent} />
       </div>
 
-      {!hideChrome && (
+      {!hideChrome && !isHiddenSceneHost && (
         <header
           data-viewport-pane-header={paneId}
           data-viewport-pane-title={paneId}

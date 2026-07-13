@@ -350,6 +350,45 @@ def test_image_pane_content_chrome_and_lifecycle(
     )
 
 
+def test_scene_pane_can_be_hidden_for_2d_only_workspaces(
+    viser_page: Page, viser_server: viser.ViserServer
+) -> None:
+    """Three image panes tile the workspace while the scene is hidden."""
+
+    image = np.zeros((9, 16, 3), dtype=np.uint8)
+    top = viser_server.viewport.add_image(image, pane_id="top", relative_to="scene")
+    viser_server.viewport.add_image(image, pane_id="left", relative_to="scene")
+    viser_server.viewport.add_image(image, pane_id="right", relative_to="top")
+    viser_server.viewport.scene_visible = False
+    assert viser_server.viewport.scene_visible is False
+
+    expect(viser_page.locator('[data-viewport-pane="scene"]')).to_have_count(0)
+    pane_boxes = [
+        _box(viser_page, f'[data-viewport-pane="{pane_id}"]')
+        for pane_id in ("left", "top", "right")
+    ]
+    canvas = _box(viser_page, "[data-viewport-grid-canvas]")
+    _assert_close(pane_boxes[0]["x"], canvas["x"])
+    _assert_close(_right(pane_boxes[-1]), _right(canvas))
+    cell_size = canvas["width"] / 64
+    for previous, current in zip(pane_boxes, pane_boxes[1:]):
+        _assert_close(_right(previous), current["x"])
+        _assert_on_grid(current["x"], canvas["x"], cell_size)
+    for pane_box in pane_boxes:
+        _assert_close(pane_box["y"], canvas["y"])
+        _assert_close(pane_box["height"], canvas["height"])
+    pane_widths = [pane_box["width"] for pane_box in pane_boxes]
+    assert max(pane_widths) - min(pane_widths) <= cell_size
+
+    top.title = "Top updated"
+    expect(viser_page.locator('[data-viewport-pane-title="top"]')).to_have_text(
+        "Top updated"
+    )
+    expect(viser_page.locator('[data-viewport-pane="scene"]')).to_have_count(0)
+    viser_server.viewport.scene_visible = True
+    expect(viser_page.locator('[data-viewport-pane="scene"]')).to_be_visible()
+
+
 def test_divider_resizing_snaps_to_square_grid(
     viser_page: Page, viser_server: viser.ViserServer
 ) -> None:

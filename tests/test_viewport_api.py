@@ -92,6 +92,41 @@ def test_viewport_image_validation() -> None:
         _validate_image(np.zeros((3, 4, 3), dtype=np.bool_))
 
 
+def test_scene_visibility_uses_persistent_pane_updates(
+    viewport_server: viser.ViserServer,
+) -> None:
+    server = viewport_server
+    assert server.viewport.scene_visible is True
+
+    with pytest.raises(TypeError, match="boolean"):
+        server.viewport.scene_visible = cast(Any, 0)
+    assert server.viewport.scene_visible is True
+
+    server.viewport.scene_visible = False
+    server.viewport.scene_visible = False
+    assert server.viewport.scene_visible is False
+    updates = [
+        message
+        for message in _messages_in_buffer(server)
+        if isinstance(message, _messages.ViewportPaneUpdateMessage)
+        and message.pane_id == server.viewport.scene_pane_id
+    ]
+    assert len(updates) == 1
+    assert updates[0].updates == {"visible": False}
+    assert _snapshot(server).pane_ids == ()
+
+    server.viewport.scene_visible = True
+    assert server.viewport.scene_visible is True
+    updates = [
+        message
+        for message in _messages_in_buffer(server)
+        if isinstance(message, _messages.ViewportPaneUpdateMessage)
+        and message.pane_id == server.viewport.scene_pane_id
+    ]
+    assert len(updates) == 1
+    assert updates[0].updates == {"visible": True}
+
+
 def test_snapshot_tracks_pane_lifecycle_in_broadcast_order(
     viewport_server: viser.ViserServer,
 ) -> None:

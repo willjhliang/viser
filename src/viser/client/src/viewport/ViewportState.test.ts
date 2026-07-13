@@ -229,6 +229,56 @@ describe("useViewportState pane lifecycle", () => {
     ]);
   });
 
+  it("hides the scene before images arrive and uses it as an empty fallback", () => {
+    const { actions, getState } = createViewportHarness();
+
+    actions.updatePane("scene", { visible: false });
+    expect(collectViewportPaneIds(getState().layout)).toEqual(["scene"]);
+    const scenePane = getState().panes.scene;
+    expect(scenePane?.kind === "scene" ? scenePane.visible : undefined).toBe(
+      false,
+    );
+
+    actions.addImagePane(imageDeclaration("first"));
+    expect(collectViewportPaneIds(getState().layout)).toEqual(["first"]);
+
+    actions.updatePane("first", { visible: false });
+    expect(collectViewportPaneIds(getState().layout)).toEqual(["scene"]);
+    actions.updatePane("first", { visible: true });
+    expect(collectViewportPaneIds(getState().layout)).toEqual(["first"]);
+
+    actions.addImagePane(
+      imageDeclaration("second", { relative_to: "scene" }),
+    );
+    expect(collectViewportPaneIds(getState().layout)).toEqual([
+      "first",
+      "second",
+    ]);
+
+    actions.removePane("first");
+    actions.removePane("second");
+    expect(collectViewportPaneIds(getState().layout)).toEqual(["scene"]);
+
+    actions.addImagePane(imageDeclaration("replacement"));
+    expect(collectViewportPaneIds(getState().layout)).toEqual([
+      "replacement",
+    ]);
+  });
+
+  it("hides and restores the scene after images arrive", () => {
+    const { actions, getState } = createViewportHarness();
+    actions.addImagePane(imageDeclaration("image"));
+
+    actions.updatePane("scene", { visible: false });
+    expect(collectViewportPaneIds(getState().layout)).toEqual(["image"]);
+
+    actions.updatePane("scene", { visible: true });
+    expect(collectViewportPaneIds(getState().layout)).toEqual([
+      "scene",
+      "image",
+    ]);
+  });
+
   it("ignores invalid and reserved pane IDs", () => {
     const { actions, getState } = createViewportHarness();
 

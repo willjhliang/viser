@@ -1,8 +1,8 @@
 Viewport API
 ============
 
-The viewport is a browser-arrangeable workspace containing the permanent 3D
-scene pane and optional native 2D panes. Panes created through
+The viewport is a browser-arrangeable workspace containing a 3D scene pane by
+default and optional native 2D panes. Panes created through
 ``server.viewport`` are shared by all connected clients. The regular GUI
 panel remains separate and can control either 2D or 3D content through normal
 callbacks.
@@ -33,6 +33,20 @@ focused pane label can swap with a neighbor using ``Shift`` plus an arrow key.
 
 Hiding a pane collapses its split and expands the remaining panes. Showing it
 again inserts it back into the workspace.
+
+Scene pane visibility
+---------------------
+
+For a 2D-only workspace, hide the 3D scene pane explicitly:
+
+.. code-block:: python
+
+   server.viewport.scene_visible = False
+
+The scene remains available as an empty-workspace fallback if every 2D pane is
+hidden or removed. It is hidden again automatically when a visible 2D pane is
+added. Setting ``scene_visible`` back to ``True`` restores the scene beside the
+2D panes.
 
 See the :download:`complete streaming example
 <../../../../examples/02_gui/11_viewport_images.py>`.

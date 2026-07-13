@@ -229,19 +229,23 @@ export function normalizeViewportLayout(value: unknown): ViewportLayout {
  * in this client.
  *
  * Unknown and duplicate leaves are removed. Malformed splits are collapsed,
- * weights are repaired, and missing panes are inserted to the right of the
- * scene in deterministic `visiblePaneIds` order. The scene is always present,
- * even if the supplied visible list or serialized layout omitted it.
+ * weights are repaired, and missing panes are inserted in deterministic
+ * `visiblePaneIds` order. The scene is retained as a fallback when no other
+ * pane is visible.
  */
 export function reconcileViewportLayout(
   value: unknown,
   visiblePaneIds: readonly string[],
   scenePaneId = VIEWPORT_SCENE_PANE_ID,
+  sceneVisible = true,
 ): ViewportLayout {
+  const nonScenePaneIds = visiblePaneIds
+    .filter((paneId) => paneId !== scenePaneId)
+    .filter((paneId, index, paneIds) => paneIds.indexOf(paneId) === index);
   const orderedPaneIds = [
-    scenePaneId,
-    ...visiblePaneIds.filter((paneId) => paneId !== scenePaneId),
-  ].filter((paneId, index, paneIds) => paneIds.indexOf(paneId) === index);
+    ...(sceneVisible || nonScenePaneIds.length === 0 ? [scenePaneId] : []),
+    ...nonScenePaneIds,
+  ];
   const allowedPaneIds = new Set(orderedPaneIds);
   const seenPaneIds = new Set<string>();
   const serializedRoot =
@@ -252,17 +256,18 @@ export function reconcileViewportLayout(
     seenObjects: new WeakSet<object>(),
   });
 
-  if (!seenPaneIds.has(scenePaneId)) {
+  const firstPaneId = orderedPaneIds[0]!;
+  if (!seenPaneIds.has(firstPaneId)) {
     layout =
       layout === null
-        ? pane(scenePaneId)
-        : makeSplit("row", [pane(scenePaneId), layout], [1, 1]);
-    seenPaneIds.add(scenePaneId);
+        ? pane(firstPaneId)
+        : makeSplit("row", [pane(firstPaneId), layout], [1, 1]);
+    seenPaneIds.add(firstPaneId);
   }
 
   // Advance the anchor as panes are inserted so multiple missing panes keep
-  // deterministic registry order beside the scene.
-  let anchorPaneId = scenePaneId;
+  // deterministic registry order beside the first pane.
+  let anchorPaneId = firstPaneId;
   for (const paneId of orderedPaneIds) {
     if (seenPaneIds.has(paneId)) continue;
     layout = insertPaneAtEdge(layout!, paneId, anchorPaneId, "right");
@@ -270,7 +275,7 @@ export function reconcileViewportLayout(
     anchorPaneId = paneId;
   }
 
-  // The scene insertion above guarantees a non-null layout.
+  // The first-pane insertion above guarantees a non-null layout.
   return { version: 1, root: layout! };
 }
 

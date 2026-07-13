@@ -28,6 +28,7 @@ export interface ViewportImageProps {
 export interface ViewportScenePane {
   kind: "scene";
   paneId: typeof VIEWPORT_SCENE_PANE_ID;
+  visible: boolean;
 }
 
 export interface ViewportImagePane {
@@ -97,6 +98,7 @@ function initialPanes(): Record<string, ViewportPane> {
   panes[VIEWPORT_SCENE_PANE_ID] = {
     kind: "scene",
     paneId: VIEWPORT_SCENE_PANE_ID,
+    visible: true,
   };
   return panes;
 }
@@ -118,7 +120,10 @@ function copyPaneRecord(
 }
 
 function paneIsVisible(pane: ViewportPane | undefined): boolean {
-  return pane === undefined || pane.kind === "scene" || pane.props.visible;
+  return (
+    pane === undefined ||
+    (pane.kind === "scene" ? pane.visible : pane.props.visible)
+  );
 }
 
 function retainedPaneIds(
@@ -128,9 +133,36 @@ function retainedPaneIds(
 ): string[] {
   return collectViewportPaneIds(layout).filter(
     (paneId) =>
-      paneId === VIEWPORT_SCENE_PANE_ID ||
-      ((authoritativePaneIds === null || authoritativePaneIds.has(paneId)) &&
-        paneIsVisible(panes[paneId])),
+      paneIsVisible(panes[paneId]) &&
+      (paneId === VIEWPORT_SCENE_PANE_ID ||
+        authoritativePaneIds === null ||
+        authoritativePaneIds.has(paneId)),
+  );
+}
+
+function scenePaneIsVisible(panes: Record<string, ViewportPane>): boolean {
+  const scenePane = panes[VIEWPORT_SCENE_PANE_ID];
+  return (
+    scenePane === undefined ||
+    scenePane.kind !== "scene" ||
+    scenePane.visible
+  );
+}
+
+function reconcilePaneLayout(
+  layout: ViewportLayout,
+  panes: Record<string, ViewportPane>,
+  authoritativePaneIds: ReadonlySet<string> | null,
+  omittedPaneId?: string,
+): ViewportLayout {
+  const paneIds = retainedPaneIds(layout, panes, authoritativePaneIds).filter(
+    (paneId) => paneId !== omittedPaneId,
+  );
+  return reconcileViewportLayout(
+    layout,
+    paneIds,
+    VIEWPORT_SCENE_PANE_ID,
+    scenePaneIsVisible(panes),
   );
 }
 
@@ -216,14 +248,24 @@ export function useViewportState(
         if (!message.props.visible) {
           layout = removeViewportPane(layout, paneId);
         } else if (!hasViewportPane(layout, paneId)) {
+          const layoutPaneIds = collectViewportPaneIds(layout);
+          const fallbackPaneId = layoutPaneIds[layoutPaneIds.length - 1];
           const relativeTo = hasViewportPane(layout, message.relative_to)
             ? message.relative_to
-            : VIEWPORT_SCENE_PANE_ID;
+            : (fallbackPaneId ?? VIEWPORT_SCENE_PANE_ID);
           layout = insertViewportPane(
             layout,
             paneId,
             relativeTo,
             message.placement,
+          );
+        }
+
+        if (!scenePaneIsVisible(panes)) {
+          layout = reconcilePaneLayout(
+            layout,
+            panes,
+            authoritativePaneIdsRef.current,
           );
         }
 
@@ -234,21 +276,53 @@ export function useViewportState(
       updatePane: (paneId, updates) => {
         const state = store.get();
         const pane = state.panes[paneId];
-        if (pane === undefined || pane.kind !== "image") return;
+        if (pane === undefined) return;
+
         const panes = copyPaneRecord(state.panes);
+        if (pane.kind === "scene") {
+          if (
+            typeof updates.visible !== "boolean" ||
+            updates.visible === pane.visible
+          ) {
+            return;
+          }
+          panes[paneId] = { ...pane, visible: updates.visible };
+          const layout = reconcilePaneLayout(
+            state.layout,
+            panes,
+            authoritativePaneIdsRef.current,
+          );
+          if (commitLayout(layout)) store.set({ panes, layout });
+          else store.set({ panes });
+          return;
+        }
+
         const updatedPane = { ...pane, props: { ...pane.props, ...updates } };
         panes[paneId] = updatedPane;
 
         let layout = state.layout;
         if (updatedPane.props.visible !== pane.props.visible) {
-          layout = updatedPane.props.visible
-            ? insertViewportPane(
-                layout,
-                paneId,
-                VIEWPORT_SCENE_PANE_ID,
-                "right",
-              )
-            : removeViewportPane(layout, paneId);
+          if (updatedPane.props.visible) {
+            const layoutPaneIds = collectViewportPaneIds(layout);
+            const fallbackPaneId = layoutPaneIds[layoutPaneIds.length - 1];
+            layout = insertViewportPane(
+              layout,
+              paneId,
+              hasViewportPane(layout, VIEWPORT_SCENE_PANE_ID)
+                ? VIEWPORT_SCENE_PANE_ID
+                : (fallbackPaneId ?? VIEWPORT_SCENE_PANE_ID),
+              "right",
+            );
+          } else {
+            layout = removeViewportPane(layout, paneId);
+          }
+          if (!scenePaneIsVisible(panes)) {
+            layout = reconcilePaneLayout(
+              layout,
+              panes,
+              authoritativePaneIdsRef.current,
+            );
+          }
         }
 
         if (commitLayout(layout)) store.set({ panes, layout });
@@ -261,7 +335,15 @@ export function useViewportState(
         const state = store.get();
         const panes = copyPaneRecord(state.panes);
         delete panes[paneId];
-        const layout = removeViewportPane(state.layout, paneId);
+        let layout = removeViewportPane(state.layout, paneId);
+        if (!scenePaneIsVisible(panes)) {
+          layout = reconcilePaneLayout(
+            layout,
+            panes,
+            authoritativePaneIdsRef.current,
+            paneId,
+          );
+        }
         if (commitLayout(layout)) store.set({ panes, layout });
         else store.set({ panes });
       },
@@ -288,9 +370,10 @@ export function useViewportState(
 
         // Retain saved leaves named by the snapshot even if their create has
         // not arrived yet, but do not invent leaves for unhydrated IDs.
-        const layout = reconcileViewportLayout(
+        const layout = reconcilePaneLayout(
           state.layout,
-          retainedPaneIds(state.layout, panes, authoritativePaneIds),
+          panes,
+          authoritativePaneIds,
         );
         if (commitLayout(layout)) store.set({ panes, layout });
         else store.set({ panes });
@@ -299,13 +382,10 @@ export function useViewportState(
       commitUserLayout: (rawLayout) => {
         const state = store.get();
         const normalized = normalizeViewportLayout(rawLayout);
-        const layout = reconcileViewportLayout(
+        const layout = reconcilePaneLayout(
           normalized,
-          retainedPaneIds(
-            normalized,
-            state.panes,
-            authoritativePaneIdsRef.current,
-          ),
+          state.panes,
+          authoritativePaneIdsRef.current,
         );
         if (commitLayout(layout)) store.set({ layout });
       },
