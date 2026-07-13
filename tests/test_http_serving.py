@@ -6,12 +6,14 @@ incompatibilities (e.g. methods that only exist on newer Pythons) would raise
 inside ``process_request`` and surface as a 500 with the websockets library's
 default failure message."""
 
+import gzip
 import http.client
+import socket
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, Optional, Tuple
 from unittest.mock import patch
 
 import viser
@@ -28,6 +30,28 @@ def _raw_get_status(host: str, port: int, raw_target: str) -> int:
         return conn.getresponse().status
     finally:
         conn.close()
+
+
+def _raw_get(
+    host: str,
+    port: int,
+    raw_target: str,
+    headers: Optional[Dict[str, str]] = None,
+) -> Tuple[int, Dict[str, str], bytes]:
+    conn = http.client.HTTPConnection(host, port, timeout=5)
+    try:
+        conn.request("GET", raw_target, headers=headers or {})
+        response = conn.getresponse()
+        response_headers = {key.lower(): value for key, value in response.getheaders()}
+        return response.status, response_headers, response.read()
+    finally:
+        conn.close()
+
+
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 @patch.object(viser._client_autobuild, "ensure_client_is_built", lambda: None)
@@ -69,6 +93,82 @@ def _fetch(url: str) -> Tuple[int, bytes]:
             return resp.status, resp.read()
     except urllib.error.HTTPError as e:
         return e.code, b""
+
+
+def test_http_etag_revalidation(tmp_path: Path) -> None:
+    served_root = tmp_path / "served"
+    served_root.mkdir()
+    payload = b"<html>cache me</html>" * 100
+    (served_root / "index.html").write_bytes(payload)
+
+    port = _find_free_port()
+    server = infra.WebsockServer(
+        host="127.0.0.1",
+        port=port,
+        http_server_root=served_root,
+        verbose=False,
+    )
+    server.start()
+    try:
+        time.sleep(0.1)
+        status, headers, body = _raw_get(
+            "127.0.0.1", port, "/", {"Accept-Encoding": "identity"}
+        )
+        assert status == 200
+        assert body == payload
+        identity_etag = headers["etag"]
+        assert identity_etag.startswith('"') and identity_etag.endswith('"')
+        assert headers["cache-control"] == "no-cache"
+        assert headers["vary"] == "Accept-Encoding"
+
+        status, headers, body = _raw_get(
+            "127.0.0.1",
+            port,
+            "/",
+            {"Accept-Encoding": "identity", "If-None-Match": identity_etag},
+        )
+        assert status == 304
+        assert body == b""
+        assert headers["etag"] == identity_etag
+        assert "content-length" not in headers
+
+        status, _, _ = _raw_get(
+            "127.0.0.1",
+            port,
+            "/",
+            {"If-None-Match": f'"other", W/{identity_etag}'},
+        )
+        assert status == 304
+        assert _raw_get("127.0.0.1", port, "/", {"If-None-Match": "*"})[0] == 304
+
+        status, headers, body = _raw_get(
+            "127.0.0.1", port, "/", {"Accept-Encoding": "gzip"}
+        )
+        assert status == 200
+        assert gzip.decompress(body) == payload
+        gzip_etag = headers["etag"]
+        assert gzip_etag != identity_etag
+
+        assert (
+            _raw_get(
+                "127.0.0.1",
+                port,
+                "/",
+                {"Accept-Encoding": "gzip", "If-None-Match": identity_etag},
+            )[0]
+            == 200
+        )
+        assert (
+            _raw_get(
+                "127.0.0.1",
+                port,
+                "/",
+                {"Accept-Encoding": "gzip", "If-None-Match": gzip_etag},
+            )[0]
+            == 304
+        )
+    finally:
+        server.stop()
 
 
 def test_http_serves_files_through_symlink(tmp_path: Path):

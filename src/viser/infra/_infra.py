@@ -7,6 +7,7 @@ import base64
 import contextlib
 import dataclasses
 import gzip
+import hashlib
 import http
 import logging
 import mimetypes
@@ -580,6 +581,7 @@ class WebsockServer(WebsockMessageHandler):
         # Host client on the same port as the websocket.
         file_cache: dict[Path, bytes] = {}
         file_cache_gzipped: dict[Path, bytes] = {}
+        file_cache_etags: dict[tuple[Path, bool], str] = {}
 
         filter_added = False
 
@@ -679,13 +681,43 @@ class WebsockServer(WebsockMessageHandler):
             if use_gzip:
                 if source_path not in file_cache_gzipped:
                     file_cache_gzipped[source_path] = gzip.compress(
-                        file_cache[source_path]
+                        file_cache[source_path], mtime=0
                     )
                 response_payload = file_cache_gzipped[source_path]
             else:
                 response_payload = file_cache[source_path]
 
+            cache_key = (source_path, use_gzip)
+            if cache_key not in file_cache_etags:
+                digest = hashlib.sha256(response_payload).hexdigest()
+                file_cache_etags[cache_key] = f'"{digest}"'
+            etag = file_cache_etags[cache_key]
+            cache_headers = {
+                "Cache-Control": "no-cache",
+                "ETag": etag,
+                "Vary": "Accept-Encoding",
+            }
+
+            etag_matches = False
+            for value in request.headers.get_all("If-None-Match"):
+                for candidate in value.split(","):
+                    candidate = candidate.strip()
+                    if candidate.startswith("W/"):
+                        candidate = candidate[2:]
+                    if candidate in ("*", etag):
+                        etag_matches = True
+                        break
+                if etag_matches:
+                    break
+            if etag_matches:
+                return Response(
+                    http.HTTPStatus.NOT_MODIFIED,
+                    "NOT MODIFIED",
+                    websockets.datastructures.Headers(**cache_headers),
+                )
+
             response_headers = {
+                **cache_headers,
                 "Content-Type": mime_type,
                 "Content-Length": str(len(response_payload)),
                 "Content-Encoding": "gzip" if use_gzip else "identity",
