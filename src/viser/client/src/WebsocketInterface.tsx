@@ -13,10 +13,13 @@ export function WebsocketMessageProducer() {
   const server = viewer.useGui((state) => state.server);
   const resetGui = viewer.guiActions.resetGui;
   const resetScene = viewer.sceneTreeActions.resetScene;
+  const resetPanes = viewer.viewportActions.resetPanes;
+  const setPersistenceServer = viewer.viewportActions.setPersistenceServer;
 
   syncSearchParamServer(server);
 
   React.useEffect(() => {
+    setPersistenceServer(server);
     const worker = new WebsocketClientWorker();
     let isConnected = false;
     let retryIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -56,6 +59,7 @@ export function WebsocketMessageProducer() {
         isConnected = true;
         resetGui();
         resetScene();
+        resetPanes();
         // Drop any messages left over from the previous connection and re-arm
         // the first-batch ordering hack, so the server's fresh scene replay
         // applies against clean state. The worker/ref persist across reconnects,
@@ -118,7 +122,7 @@ export function WebsocketMessageProducer() {
         );
       viewer.useGui.set({ websocketState: "inactive" });
     };
-  }, [server, resetGui, resetScene]);
+  }, [server, resetGui, resetScene, resetPanes, setPersistenceServer]);
 
   return null;
 }

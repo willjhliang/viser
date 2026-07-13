@@ -62,6 +62,8 @@ import { MacWindowWrapper } from "./MacWindowWrapper";
 import { CsmDirectionalLight } from "./CsmDirectionalLight";
 import { VISER_VERSION, GITHUB_CONTRIBUTORS, Contributor } from "./VersionInfo";
 import { BatchedLabelManager } from "./BatchedLabelManager";
+import { useViewportState } from "./viewport/ViewportState";
+import { ViewportWorkspace } from "./viewport/ViewportWorkspace";
 
 // Import logo as asset for proper bundling/inlining.
 import logoSvg from "./assets/logo.svg";
@@ -288,6 +290,9 @@ function ViewerRoot() {
   // Create GUI state.
   const guiState = useGuiState(initialServer);
 
+  // Create viewport pane and workspace layout state.
+  const viewportState = useViewportState();
+
   // Create the context value with hooks and single ref.
   const viewer: ViewerContextContents = {
     messageSource,
@@ -300,6 +305,8 @@ function ViewerRoot() {
     useDevSettings: devSettingsStore,
     useInitialCamera: initialCameraState.store,
     initialCameraActions: initialCameraState.actions,
+    useViewport: viewportState.store,
+    viewportActions: viewportState.actions,
     mutable,
     interaction,
   };
@@ -445,10 +452,14 @@ function AppLayout({
   }, [dockFloating]);
 
   const canvasContent = (
-    <>
-      {canvases}
-      {showLogo && messageSource === "websocket" && <ViserLogo />}
-    </>
+    <ViewportWorkspace
+      sceneContent={
+        <>
+          {canvases}
+          {showLogo && messageSource === "websocket" && <ViserLogo />}
+        </>
+      }
+    />
   );
 
   return (

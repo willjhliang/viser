@@ -98,6 +98,8 @@ function useMessageHandler() {
   const addCommand = viewer.guiActions.addCommand;
   const updateCommand = viewer.guiActions.updateCommand;
   const removeCommand = viewer.guiActions.removeCommand;
+  const { addImagePane, updatePane, removePane, setPaneSnapshot } =
+    viewer.viewportActions;
 
   // Same as addSceneNode, but make a parent in the form of a dummy coordinate
   // frame if it doesn't exist yet.
@@ -658,6 +660,22 @@ function useMessageHandler() {
       // Remove a GUI input.
       case "GuiRemoveMessage": {
         removeGui(message.uuid);
+        return;
+      }
+      case "ViewportImageMessage": {
+        addImagePane(message);
+        return;
+      }
+      case "ViewportPaneUpdateMessage": {
+        updatePane(message.pane_id, message.updates);
+        return;
+      }
+      case "ViewportPaneRemoveMessage": {
+        removePane(message.pane_id);
+        return;
+      }
+      case "ViewportPaneSnapshotMessage": {
+        setPaneSnapshot(message.pane_ids);
         return;
       }
       // Broadcast to clients that a form was submitted; reset dirty state.

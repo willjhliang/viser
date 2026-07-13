@@ -14,6 +14,7 @@ import { useEnvironmentState } from "./EnvironmentState";
 import { useDevSettingsStore } from "./DevSettingsStore";
 import { GetRenderRequestMessage, Message } from "./WebsocketMessages";
 import { InteractionController } from "./pointer/interactionController";
+import { useViewportState } from "./viewport/ViewportState";
 
 export type NodePoseEntry = {
   wxyz: [number, number, number, number];
@@ -96,6 +97,8 @@ export type ViewerContextContents = {
   useDevSettings: ReturnType<typeof useDevSettingsStore>;
   useInitialCamera: ReturnType<typeof useInitialCameraState>["store"];
   initialCameraActions: ReturnType<typeof useInitialCameraState>["actions"];
+  useViewport: ReturnType<typeof useViewportState>["store"];
+  viewportActions: ReturnType<typeof useViewportState>["actions"];
 
   // Single reference to all mutable state.
   mutable: React.MutableRefObject<ViewerMutable>;

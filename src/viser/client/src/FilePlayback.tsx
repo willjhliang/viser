@@ -197,6 +197,8 @@ function PlaybackInterface({
   // Instead of removing all of the existing scene nodes, we're just going to hide them.
   // This will prevent unnecessary remounting when messages are looped.
   function resetScene() {
+    // Discard temporal messages queued beyond the new playback position.
+    viewerMutable.messageQueue.length = 0;
     const sceneTreeState = viewer.useSceneTree.getAll();
     Object.keys(sceneTreeState).forEach((key) => {
       if (key === "") return;
@@ -220,6 +222,7 @@ function PlaybackInterface({
         });
       }
     });
+    viewer.viewportActions.reset();
   }
 
   const [currentTime, setCurrentTime] = useState(0.0);
