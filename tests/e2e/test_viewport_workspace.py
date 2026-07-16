@@ -1005,16 +1005,13 @@ def test_pane_group_divides_space_into_exact_thirds(
         )
     viser_server.viewport.scene_visible = False
 
-    expect(viser_page.locator('[data-viewport-pane="c"]')).to_be_visible(
-        timeout=10_000
-    )
+    expect(viser_page.locator('[data-viewport-pane="c"]')).to_be_visible(timeout=10_000)
     expect(viser_page.locator('[data-viewport-pane="scene"]')).to_have_count(0)
 
     canvas = _box(viser_page, "[data-viewport-grid-canvas]")
     cell_size = canvas["width"] / 60
     boxes = [
-        _box(viser_page, f'[data-viewport-pane="{name}"]')
-        for name in ("a", "b", "c")
+        _box(viser_page, f'[data-viewport-pane="{name}"]') for name in ("a", "b", "c")
     ]
     _assert_close(boxes[0]["x"], canvas["x"])
     _assert_close(_right(boxes[2]), _right(canvas))
@@ -1024,3 +1021,55 @@ def test_pane_group_divides_space_into_exact_thirds(
         # Thirds land exactly on the 60-column grid: 20 cells each.
         _assert_close(box["width"], 20 * cell_size)
         _assert_on_grid(box["x"], canvas["x"], cell_size)
+
+
+def test_pane_grid_divides_space_into_equal_cells(
+    viser_page: Page, viser_server: viser.ViserServer
+) -> None:
+    """add_grid fills row-major with equal columns and rows."""
+
+    frame = np.zeros((4, 4, 3), dtype=np.uint8)
+    names = [f"cell-{row}{col}" for row in range(3) for col in range(3)]
+    grid = viser_server.viewport.add_grid(3)
+    for name in names:
+        grid.add_image(frame, pane_id=name, title=name)
+    viser_server.viewport.scene_visible = False
+
+    expect(viser_page.locator('[data-viewport-pane="cell-22"]')).to_be_visible(
+        timeout=10_000
+    )
+    expect(viser_page.locator('[data-viewport-pane="scene"]')).to_have_count(0)
+
+    canvas = _box(viser_page, "[data-viewport-grid-canvas]")
+    cell_size = canvas["width"] / 60
+    boxes = [
+        [
+            _box(viser_page, f'[data-viewport-pane="cell-{row}{col}"]')
+            for col in range(3)
+        ]
+        for row in range(3)
+    ]
+
+    # Columns are exact thirds of the workspace width: 20 grid cells each.
+    for row in boxes:
+        _assert_close(row[0]["x"], canvas["x"])
+        _assert_close(_right(row[2]), _right(canvas))
+        for left, right in zip(row, row[1:]):
+            _assert_close(_right(left), right["x"])
+        for box in row:
+            _assert_close(box["width"], 20 * cell_size)
+            _assert_on_grid(box["x"], canvas["x"], cell_size)
+            _assert_on_grid(box["y"], canvas["y"], cell_size)
+            _assert_close(box["height"], row[0]["height"])
+
+    # Rows tile the full height and are equal to within one grid cell; row
+    # heights snap to the square grid, which may not divide into exact thirds.
+    _assert_close(boxes[0][0]["y"], canvas["y"])
+    _assert_close(_bottom(boxes[2][0]), _bottom(canvas))
+    for upper, lower in zip(boxes, boxes[1:]):
+        for upper_box, lower_box in zip(upper, lower):
+            _assert_close(_bottom(upper_box), lower_box["y"])
+    for row in boxes:
+        _assert_close(
+            row[0]["height"], canvas["height"] / 3, tolerance=cell_size + 1.75
+        )

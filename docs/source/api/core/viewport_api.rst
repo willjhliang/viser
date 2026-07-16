@@ -35,6 +35,23 @@ Hiding a pane collapses its split and expands the remaining panes. Showing it
 again inserts it back beside the scene rather than at its previous position;
 the browser's saved arrangement is restored on the next reload.
 
+Equally divided groups
+----------------------
+
+``add_row``, ``add_column``, and ``add_grid`` return groups that place added
+panes for you. Rows and columns re-divide their combined space equally on
+each addition; grids fill left to right, top to bottom, keeping cells equal:
+
+.. code-block:: python
+
+   grid = server.viewport.add_grid(columns=2)
+   for name, frame in feeds.items():
+       grid.add_image(frame, pane_id=name, title=name)
+
+Groups only shape creation-time placement. Panes created through them are
+ordinary panes afterwards, and a browser's saved arrangement still takes
+precedence on reload.
+
 Scene pane visibility
 ---------------------
 
@@ -82,5 +99,9 @@ Reference
    :undoc-members:
 
 .. autoclass:: viser.ViewportPaneGroup
+   :members:
+   :undoc-members:
+
+.. autoclass:: viser.ViewportPaneGrid
    :members:
    :undoc-members:

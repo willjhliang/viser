@@ -367,6 +367,107 @@ class ViewportPaneGroup:
         return handle
 
 
+class ViewportPaneGrid:
+    """Adds panes to an equally divided grid.
+
+    Returned by :meth:`ViewportApi.add_grid`. Panes fill left to right, top
+    to bottom: the first ``columns`` panes form the top row, and later panes
+    wrap onto new rows beneath it, re-dividing their row and column equally
+    on each addition. Like :class:`ViewportPaneGroup`, the grid only shapes
+    creation-time placement; see it for details.
+    """
+
+    def __init__(
+        self,
+        api: ViewportApi,
+        columns: int,
+        placement: ViewportPanePlacement,
+        relative_to: str,
+    ) -> None:
+        self._api = api
+        self._columns = columns
+        self._row = ViewportPaneGroup(api, "row", placement, relative_to)
+        self._column_groups: list[ViewportPaneGroup] = []
+        self._count = 0
+
+    def _next_group(self) -> ViewportPaneGroup:
+        """Group that places the grid's next pane: the shared top row while
+        it is still filling, then the column the pane wraps onto."""
+
+        if self._count < self._columns:
+            return self._row
+        return self._column_groups[self._count % self._columns]
+
+    def _track(
+        self, group: ViewportPaneGroup, handle: _ViewportPaneHandle[Any]
+    ) -> None:
+        """Advance the fill position after a successful add. A top-row pane
+        seeds its column group as an adopted first member, so panes beneath
+        equalize together with it into exact equal parts."""
+
+        if group is self._row:
+            column = ViewportPaneGroup(
+                self._api, "column", "bottom", relative_to=handle.pane_id
+            )
+            column._members.append(handle)
+            self._column_groups.append(column)
+        self._count += 1
+
+    def add_image(
+        self,
+        image: np.ndarray,
+        *,
+        pane_id: str | None = None,
+        title: str = "Image",
+        format: Literal["auto", "png", "jpeg"] = "auto",
+        jpeg_quality: int | None = None,
+        fit: ViewportPaneFit = "contain",
+        visible: bool = True,
+    ) -> ViewportImageHandle:
+        """Add an image pane to the grid's next cell. Accepts the same
+        arguments as :meth:`ViewportApi.add_image`, minus placement, which
+        the grid owns."""
+
+        with self._api._lock:
+            group = self._next_group()
+            handle = group.add_image(
+                image,
+                pane_id=pane_id,
+                title=title,
+                format=format,
+                jpeg_quality=jpeg_quality,
+                fit=fit,
+                visible=visible,
+            )
+            self._track(group, handle)
+        return handle
+
+    def add_plotly(
+        self,
+        figure: go.Figure,
+        *,
+        config: Mapping[str, Any] | None = None,
+        pane_id: str | None = None,
+        title: str = "Plot",
+        visible: bool = True,
+    ) -> ViewportPlotlyHandle:
+        """Add a Plotly pane to the grid's next cell. Accepts the same
+        arguments as :meth:`ViewportApi.add_plotly`, minus placement, which
+        the grid owns."""
+
+        with self._api._lock:
+            group = self._next_group()
+            handle = group.add_plotly(
+                figure,
+                config=config,
+                pane_id=pane_id,
+                title=title,
+                visible=visible,
+            )
+            self._track(group, handle)
+        return handle
+
+
 class ViewportApi:
     """Interface for native panes in the browser-managed viewport workspace."""
 
@@ -736,6 +837,37 @@ class ViewportApi:
         """
 
         return ViewportPaneGroup(self, "column", placement, relative_to)
+
+    def add_grid(
+        self,
+        columns: int,
+        *,
+        placement: ViewportPanePlacement = "right",
+        relative_to: str = "scene",
+    ) -> ViewportPaneGrid:
+        """Create a group that lays out added panes in an equally divided
+        grid.
+
+        Panes added through the returned grid's ``add_image`` and
+        ``add_plotly`` methods fill left to right, top to bottom, wrapping to
+        a new row after every ``columns`` panes. Rows and columns are
+        re-divided equally on each addition, so a filled grid has equal
+        cells. The grid counterpart of :meth:`add_row`; see it for placement
+        semantics.
+
+        Args:
+            columns: Number of panes per row.
+            placement: Initial split edge for the grid, relative to
+                relative_to.
+            relative_to: Visible pane used for the grid's initial placement.
+
+        Returns:
+            Grid for adding equally sized panes.
+        """
+
+        if columns < 1:
+            raise ValueError("columns must be at least 1.")
+        return ViewportPaneGrid(self, columns, placement, relative_to)
 
 
 def _validate_fit(value: object) -> ViewportPaneFit:

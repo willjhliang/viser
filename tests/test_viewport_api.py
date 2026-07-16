@@ -647,3 +647,91 @@ def test_pane_groups_ignore_unrelated_panes_reusing_member_ids(
         if isinstance(message, _messages.ViewportImageMessage)
     }
     assert creates["c"].relative_to == "scene"
+
+
+def test_pane_grids_fill_row_major_with_equal_cells(
+    viewport_server: viser.ViserServer,
+) -> None:
+    go = pytest.importorskip("plotly.graph_objects")
+
+    server = viewport_server
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="at least 1"):
+        server.viewport.add_grid(0)
+
+    grid = server.viewport.add_grid(2, placement="right", relative_to="scene")
+    grid.add_image(frame, pane_id="a")
+    grid.add_plotly(go.Figure(), pane_id="b")
+    for pane_id in ("c", "d", "e", "f"):
+        grid.add_image(frame, pane_id=pane_id)
+
+    creates = {
+        message.pane_id: message
+        for message in _messages_in_buffer(server)
+        if isinstance(
+            message, (_messages.ViewportImageMessage, _messages.ViewportPlotlyMessage)
+        )
+    }
+    # The top row fills like a row group.
+    assert creates["a"].placement == "right"
+    assert creates["a"].relative_to == "scene"
+    assert creates["a"].equalize_group == ()
+    assert creates["b"].placement == "right"
+    assert creates["b"].relative_to == "a"
+    assert creates["b"].equalize_group == ("a",)
+    # Later panes wrap onto new rows beneath the top row. Each equalizes
+    # with everything above it in its column, including the top-row pane, so
+    # columns stay equally divided.
+    assert creates["c"].placement == "bottom"
+    assert creates["c"].relative_to == "a"
+    assert creates["c"].equalize_group == ("a",)
+    assert creates["d"].placement == "bottom"
+    assert creates["d"].relative_to == "b"
+    assert creates["d"].equalize_group == ("b",)
+    assert creates["e"].relative_to == "c"
+    assert creates["e"].equalize_group == ("a", "c")
+    assert creates["f"].relative_to == "d"
+    assert creates["f"].equalize_group == ("b", "d")
+
+
+def test_pane_grids_skip_dead_cells(
+    viewport_server: viser.ViserServer,
+) -> None:
+    server = viewport_server
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+
+    grid = server.viewport.add_grid(2)
+    top_left = grid.add_image(frame, pane_id="a")
+    grid.add_image(frame, pane_id="b")
+    top_left.remove()
+
+    # The cell below a removed pane falls back like an emptied group: its
+    # column's anchor is gone, so it lands beside the scene.
+    grid.add_image(frame, pane_id="c")
+    grid.add_image(frame, pane_id="d")
+    creates = {
+        message.pane_id: message
+        for message in _messages_in_buffer(server)
+        if isinstance(message, _messages.ViewportImageMessage)
+    }
+    assert creates["c"].placement == "bottom"
+    assert creates["c"].relative_to == "scene"
+    assert creates["c"].equalize_group == ()
+    # The intact column is unaffected.
+    assert creates["d"].placement == "bottom"
+    assert creates["d"].relative_to == "b"
+    assert creates["d"].equalize_group == ("b",)
+
+    # The next row anchors on the surviving column members.
+    grid.add_image(frame, pane_id="e")
+    grid.add_image(frame, pane_id="f")
+    creates = {
+        message.pane_id: message
+        for message in _messages_in_buffer(server)
+        if isinstance(message, _messages.ViewportImageMessage)
+    }
+    assert creates["e"].relative_to == "c"
+    assert creates["e"].equalize_group == ("c",)
+    assert creates["f"].relative_to == "d"
+    assert creates["f"].equalize_group == ("b", "d")
