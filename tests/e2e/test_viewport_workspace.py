@@ -370,7 +370,7 @@ def test_scene_pane_can_be_hidden_for_2d_only_workspaces(
     canvas = _box(viser_page, "[data-viewport-grid-canvas]")
     _assert_close(pane_boxes[0]["x"], canvas["x"])
     _assert_close(_right(pane_boxes[-1]), _right(canvas))
-    cell_size = canvas["width"] / 64
+    cell_size = canvas["width"] / 60
     for previous, current in zip(pane_boxes, pane_boxes[1:]):
         _assert_close(_right(previous), current["x"])
         _assert_on_grid(current["x"], canvas["x"], cell_size)
@@ -412,7 +412,7 @@ def test_divider_resizing_snaps_to_square_grid(
     scene_before = _box(viser_page, '[data-viewport-pane="scene"]')
     image_before = _box(viser_page, image_selector)
     _assert_horizontal_tiling(canvas, scene_before, image_before)
-    cell_size = canvas["width"] / 64
+    cell_size = canvas["width"] / 60
 
     divider_box = _box(viser_page, divider_selector)
     start_x = divider_box["x"] + divider_box["width"] / 2
@@ -595,7 +595,7 @@ def test_constrained_edge_preview_matches_committed_geometry(
     scene_before = _box(viser_page, '[data-viewport-pane="scene"]')
     image_before = _box(viser_page, image_selector)
     _assert_horizontal_tiling(canvas, scene_before, image_before)
-    nominal_cell = canvas["width"] / 64
+    nominal_cell = canvas["width"] / 60
     assert 3 <= canvas["height"] / nominal_cell < 6
 
     header = _box(viser_page, header_selector)
@@ -637,7 +637,7 @@ def test_layout_persists_across_same_browser_reload(
     )
     expect(viser_page.locator(image_selector)).to_be_visible(timeout=5_000)
     canvas = _box(viser_page, "[data-viewport-grid-canvas]")
-    cell_size = canvas["width"] / 64
+    cell_size = canvas["width"] / 60
     divider = _box(viser_page, divider_selector)
     start_x = divider["x"] + divider["width"] / 2
     start_y = divider["y"] + divider["height"] / 2

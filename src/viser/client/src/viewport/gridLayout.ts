@@ -8,7 +8,9 @@ import {
   setViewportSplitWeights,
 } from "./layoutModel";
 
-const NOMINAL_GRID_COLUMNS = 64;
+// LCM(2..6): splitting the full width into 2-6 equal panes lands exactly on
+// integer grid lines.
+const NOMINAL_GRID_COLUMNS = 60;
 const MIN_PANE_COLUMNS = 4;
 const MIN_PANE_ROWS = 3;
 const DROP_EDGE_FRACTION = 0.25;
