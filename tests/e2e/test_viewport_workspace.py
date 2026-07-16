@@ -987,3 +987,40 @@ def test_plotly_pane_template_tracks_viser_theme(
     wait_for_paper_bgcolor("templated", "white")
     viser_server.gui.configure_theme(dark_mode=True)
     wait_for_paper_bgcolor("templated", "white")
+
+
+def test_pane_group_divides_space_into_exact_thirds(
+    viser_page: Page, viser_server: viser.ViserServer
+) -> None:
+    """add_row panes re-equalize on each insertion, landing on grid lines."""
+
+    import plotly.graph_objects as go
+
+    row = viser_server.viewport.add_row()
+    for name in ("a", "b", "c"):
+        row.add_plotly(
+            go.Figure(data=[go.Scatter(x=[0, 1], y=[0, 1])]),
+            pane_id=name,
+            title=name,
+        )
+    viser_server.viewport.scene_visible = False
+
+    expect(viser_page.locator('[data-viewport-pane="c"]')).to_be_visible(
+        timeout=10_000
+    )
+    expect(viser_page.locator('[data-viewport-pane="scene"]')).to_have_count(0)
+
+    canvas = _box(viser_page, "[data-viewport-grid-canvas]")
+    cell_size = canvas["width"] / 60
+    boxes = [
+        _box(viser_page, f'[data-viewport-pane="{name}"]')
+        for name in ("a", "b", "c")
+    ]
+    _assert_close(boxes[0]["x"], canvas["x"])
+    _assert_close(_right(boxes[2]), _right(canvas))
+    for previous, current in zip(boxes, boxes[1:]):
+        _assert_close(_right(previous), current["x"])
+    for box in boxes:
+        # Thirds land exactly on the 60-column grid: 20 cells each.
+        _assert_close(box["width"], 20 * cell_size)
+        _assert_on_grid(box["x"], canvas["x"], cell_size)

@@ -7,6 +7,7 @@ import {
   ViewportSplitDirection,
   collectViewportPaneIds,
   dropViewportPane,
+  equalizeViewportPanes,
   insertViewportPane,
   normalizeViewportWeights,
   reconcileViewportLayout,
@@ -346,5 +347,53 @@ describe("split weights", () => {
     });
     expect(setViewportSplitWeights(input, [9], [3, 1])).toBe(input);
     expect(setViewportSplitWeights(input, [1], [1])).toBe(input);
+  });
+});
+
+describe("equalizeViewportPanes", () => {
+  it("levels group members without disturbing outside panes", () => {
+    // scene keeps 1/2; the group's combined 1/2 splits into thirds.
+    const input = layout(
+      split(
+        "row",
+        [pane("scene"), pane("a"), pane("b"), pane("c")],
+        [0.5, 0.25, 0.125, 0.125],
+      ),
+    );
+    const result = equalizeViewportPanes(input, ["a", "b", "c"]);
+    expectValidLayout(result);
+    expect(result.root).toMatchObject({
+      weights: [0.5, 0.5 / 3, 0.5 / 3, 0.5 / 3],
+    });
+  });
+
+  it("only equalizes members that are siblings of one split", () => {
+    const input = layout(
+      split(
+        "row",
+        [
+          split("column", [pane("scene"), pane("a")], [0.5, 0.5]),
+          pane("b"),
+          pane("c"),
+        ],
+        [0.5, 0.375, 0.125],
+      ),
+    );
+    // "a" lives in a different split; only b and c level with each other.
+    const result = equalizeViewportPanes(input, ["a", "b", "c"]);
+    expectValidLayout(result);
+    expect(result.root).toMatchObject({ weights: [0.5, 0.25, 0.25] });
+    expect(result.root).toMatchObject({
+      children: [{ weights: [0.5, 0.5] }, {}, {}],
+    });
+  });
+
+  it("returns the same layout when fewer than two members match", () => {
+    const input = layout(
+      split("row", [pane("scene"), pane("a")], [0.75, 0.25]),
+    );
+    expect(equalizeViewportPanes(input, ["a"])).toBe(input);
+    expect(equalizeViewportPanes(input, ["a", "missing"])).toBe(input);
+    expect(equalizeViewportPanes(input, [])).toBe(input);
   });
 });

@@ -1940,6 +1940,7 @@ export interface ViewportImageMessage {
   };
   placement: "left" | "right" | "top" | "bottom";
   relative_to: string;
+  equalize_group: string[];
 }
 /** Create a native Plotly pane in the viewport workspace.
  *
@@ -1956,6 +1957,7 @@ export interface ViewportPlotlyMessage {
   };
   placement: "left" | "right" | "top" | "bottom";
   relative_to: string;
+  equalize_group: string[];
 }
 /** Update one or more properties of a viewport pane.
  *

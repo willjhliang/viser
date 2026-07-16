@@ -62,6 +62,7 @@ function imageDeclaration(
     },
     placement: "right",
     relative_to: "scene",
+    equalize_group: [],
     ...overrides,
   };
 }
@@ -288,5 +289,47 @@ describe("useViewportState pane lifecycle", () => {
 
     expect(Object.keys(getState().panes)).toEqual(["scene"]);
     expect(collectViewportPaneIds(getState().layout)).toEqual(["scene"]);
+  });
+});
+
+describe("equalized pane groups", () => {
+  it("levels group members on insertion without disturbing the scene", () => {
+    const { actions, getState } = createViewportHarness();
+    actions.addImagePane(imageDeclaration("a"));
+    actions.addImagePane(
+      imageDeclaration("b", { relative_to: "a", equalize_group: ["a"] }),
+    );
+    actions.addImagePane(
+      imageDeclaration("c", { relative_to: "b", equalize_group: ["a", "b"] }),
+    );
+    // The scene keeps its half; the group divides the rest into thirds.
+    expect(getState().layout.root).toMatchObject({
+      direction: "row",
+      weights: [0.5, 0.5 / 3, 0.5 / 3, 0.5 / 3],
+    });
+  });
+
+  it("ignores the group hint when the pane is already in a saved layout", () => {
+    const storage = new MemoryStorage();
+    const first = createViewportHarness(storage);
+    first.actions.setPersistenceServer("ws://server");
+    first.actions.addImagePane(imageDeclaration("a"));
+    first.actions.addImagePane(imageDeclaration("b", { relative_to: "a" }));
+    const savedWeights = [0.5, 0.25, 0.25];
+    expect(first.getState().layout.root).toMatchObject({
+      weights: savedWeights,
+    });
+
+    // A reconnecting browser replays creates; saved arrangements win.
+    const second = createViewportHarness(storage);
+    second.actions.setPersistenceServer("ws://server");
+    second.actions.setPaneSnapshot(["a", "b"]);
+    second.actions.addImagePane(imageDeclaration("a"));
+    second.actions.addImagePane(
+      imageDeclaration("b", { relative_to: "a", equalize_group: ["a"] }),
+    );
+    expect(second.getState().layout.root).toMatchObject({
+      weights: savedWeights,
+    });
   });
 });

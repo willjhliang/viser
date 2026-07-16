@@ -470,3 +470,69 @@ def test_plotly_pane_theme_template_defaults(
     assert len(updates) == 1
     updated_layout = json.loads(updates[0].updates["_plotly_json_str"])["layout"]
     assert "template" not in updated_layout
+
+
+def test_pane_groups_emit_equalize_hints(
+    viewport_server: viser.ViserServer,
+) -> None:
+    go = pytest.importorskip("plotly.graph_objects")
+
+    server = viewport_server
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+
+    row = server.viewport.add_row(placement="right", relative_to="scene")
+    a = row.add_plotly(go.Figure(), pane_id="a")
+    b = row.add_image(frame, pane_id="b")
+    c = row.add_plotly(go.Figure(), pane_id="c")
+    assert isinstance(a, viser.ViewportPlotlyHandle)
+    assert isinstance(b, viser.ViewportImageHandle)
+    assert isinstance(c, viser.ViewportPlotlyHandle)
+
+    creates = {
+        message.pane_id: message
+        for message in _messages_in_buffer(server)
+        if isinstance(
+            message, (_messages.ViewportImageMessage, _messages.ViewportPlotlyMessage)
+        )
+    }
+    # First pane carries the group's placement and no equalize hint; later
+    # panes chain off their predecessor and equalize with prior members.
+    assert creates["a"].placement == "right"
+    assert creates["a"].relative_to == "scene"
+    assert creates["a"].equalize_group == ()
+    assert creates["b"].placement == "right"
+    assert creates["b"].relative_to == "a"
+    assert creates["b"].equalize_group == ("a",)
+    assert creates["c"].relative_to == "b"
+    assert creates["c"].equalize_group == ("a", "b")
+
+    column = server.viewport.add_column(placement="bottom", relative_to="a")
+    column.add_image(frame, pane_id="d")
+    column.add_image(frame, pane_id="e")
+    creates = {
+        message.pane_id: message
+        for message in _messages_in_buffer(server)
+        if isinstance(message, _messages.ViewportImageMessage)
+    }
+    assert creates["d"].placement == "bottom"
+    assert creates["d"].relative_to == "a"
+    assert creates["d"].equalize_group == ()
+    assert creates["e"].placement == "bottom"
+    assert creates["e"].relative_to == "d"
+    assert creates["e"].equalize_group == ("d",)
+
+    # Standalone panes never carry an equalize hint.
+    standalone = server.viewport.add_image(frame, pane_id="standalone")
+    creates_standalone = [
+        message
+        for message in _messages_in_buffer(server)
+        if isinstance(message, _messages.ViewportImageMessage)
+        and message.pane_id == "standalone"
+    ]
+    assert creates_standalone[0].equalize_group == ()
+    assert standalone.pane_id == "standalone"
+
+    # Group panes share the registry: IDs still collide across all panes.
+    with pytest.raises(ValueError, match="already exists"):
+        row.add_plotly(go.Figure(), pane_id="standalone")
+    assert _snapshot(server).pane_ids == ("a", "b", "c", "d", "e", "standalone")

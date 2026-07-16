@@ -79,3 +79,7 @@ Reference
 .. autoclass:: viser.ViewportPlotlyHandle
    :members:
    :undoc-members:
+
+.. autoclass:: viser.ViewportPaneGroup
+   :members:
+   :undoc-members:

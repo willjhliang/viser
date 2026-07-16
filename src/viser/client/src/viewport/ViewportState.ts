@@ -6,6 +6,7 @@ import {
   ViewportDropRegion,
   ViewportLayout,
   collectViewportPaneIds,
+  equalizeViewportPanes,
   hasViewportPane,
   insertViewportPane,
   normalizeViewportLayout,
@@ -68,6 +69,7 @@ export interface ViewportImageDeclaration {
   props: ViewportImageProps;
   placement: ViewportPanePlacement;
   relative_to: string;
+  equalize_group: readonly string[];
 }
 
 export interface ViewportPlotlyDeclaration {
@@ -75,6 +77,7 @@ export interface ViewportPlotlyDeclaration {
   props: ViewportPlotlyProps;
   placement: ViewportPanePlacement;
   relative_to: string;
+  equalize_group: readonly string[];
 }
 
 export type ViewportPaneUpdates = Partial<
@@ -229,6 +232,7 @@ export function useViewportState(
         pane_id: string;
         placement: ViewportPanePlacement;
         relative_to: string;
+        equalize_group: readonly string[];
       },
       pane: ViewportContentPane,
     ): void => {
@@ -255,6 +259,12 @@ export function useViewportState(
           relativeTo,
           message.placement,
         );
+        if (message.equalize_group.length > 0) {
+          layout = equalizeViewportPanes(layout, [
+            ...message.equalize_group,
+            paneId,
+          ]);
+        }
       }
 
       if (!scenePaneIsVisible(panes)) {

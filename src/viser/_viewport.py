@@ -246,6 +246,99 @@ class ViewportPlotlyHandle(_ViewportPaneHandle[_ViewportPlotlyHandleState]):
             self._queue_update({"_plotly_json_str": json_str})
 
 
+class ViewportPaneGroup:
+    """Adds panes to an equally divided row or column.
+
+    Returned by :meth:`ViewportApi.add_row` and :meth:`ViewportApi.add_column`.
+    Each pane added through the group is placed along the group's axis and the
+    group re-divides its combined space equally, without disturbing panes
+    outside the group. The group only shapes creation-time placement: panes it
+    creates are ordinary panes afterwards, and browser-saved arrangements
+    still take precedence on reload.
+    """
+
+    def __init__(
+        self,
+        api: ViewportApi,
+        axis: Literal["row", "column"],
+        placement: ViewportPanePlacement,
+        relative_to: str,
+    ) -> None:
+        self._api = api
+        self._axis: Literal["row", "column"] = axis
+        self._placement: ViewportPanePlacement = placement
+        self._relative_to = relative_to
+        self._member_ids: list[str] = []
+
+    def _next_declaration(
+        self,
+    ) -> tuple[ViewportPanePlacement, str, tuple[str, ...]]:
+        """Placement hints for the group's next pane."""
+
+        if not self._member_ids:
+            return self._placement, self._relative_to, ()
+        placement: ViewportPanePlacement = "right" if self._axis == "row" else "bottom"
+        return placement, self._member_ids[-1], tuple(self._member_ids)
+
+    def add_image(
+        self,
+        image: np.ndarray,
+        *,
+        pane_id: str | None = None,
+        title: str = "Image",
+        format: Literal["auto", "png", "jpeg"] = "auto",
+        jpeg_quality: int | None = None,
+        fit: ViewportPaneFit = "contain",
+        visible: bool = True,
+    ) -> ViewportImageHandle:
+        """Add an image pane to the group. Accepts the same arguments as
+        :meth:`ViewportApi.add_image`, minus placement, which the group
+        owns."""
+
+        placement, relative_to, equalize_group = self._next_declaration()
+        handle = self._api._add_image(
+            image,
+            pane_id=pane_id,
+            title=title,
+            format=format,
+            jpeg_quality=jpeg_quality,
+            fit=fit,
+            visible=visible,
+            placement=placement,
+            relative_to=relative_to,
+            equalize_group=equalize_group,
+        )
+        self._member_ids.append(handle.pane_id)
+        return handle
+
+    def add_plotly(
+        self,
+        figure: go.Figure,
+        *,
+        config: Mapping[str, Any] | None = None,
+        pane_id: str | None = None,
+        title: str = "Plot",
+        visible: bool = True,
+    ) -> ViewportPlotlyHandle:
+        """Add a Plotly pane to the group. Accepts the same arguments as
+        :meth:`ViewportApi.add_plotly`, minus placement, which the group
+        owns."""
+
+        placement, relative_to, equalize_group = self._next_declaration()
+        handle = self._api._add_plotly(
+            figure,
+            config=config,
+            pane_id=pane_id,
+            title=title,
+            visible=visible,
+            placement=placement,
+            relative_to=relative_to,
+            equalize_group=equalize_group,
+        )
+        self._member_ids.append(handle.pane_id)
+        return handle
+
+
 class ViewportApi:
     """Interface for native panes in the browser-managed viewport workspace."""
 
@@ -386,6 +479,33 @@ class ViewportApi:
             Handle for updating or removing the image pane.
         """
 
+        return self._add_image(
+            image,
+            pane_id=pane_id,
+            title=title,
+            format=format,
+            jpeg_quality=jpeg_quality,
+            fit=fit,
+            visible=visible,
+            placement=placement,
+            relative_to=relative_to,
+            equalize_group=(),
+        )
+
+    def _add_image(
+        self,
+        image: np.ndarray,
+        *,
+        pane_id: str | None,
+        title: str,
+        format: Literal["auto", "png", "jpeg"],
+        jpeg_quality: int | None,
+        fit: ViewportPaneFit,
+        visible: bool,
+        placement: ViewportPanePlacement,
+        relative_to: str,
+        equalize_group: tuple[str, ...],
+    ) -> ViewportImageHandle:
         image = _validate_image(image)
         pane_id = self._validate_pane_declaration(
             pane_id, title, visible, placement, relative_to
@@ -433,6 +553,7 @@ class ViewportApi:
                 props=props,
                 placement=placement,
                 relative_to=relative_to,
+                equalize_group=equalize_group,
             ),
             relative_to,
         )
@@ -484,6 +605,29 @@ class ViewportApi:
             Handle for updating or removing the Plotly pane.
         """
 
+        return self._add_plotly(
+            figure,
+            config=config,
+            pane_id=pane_id,
+            title=title,
+            visible=visible,
+            placement=placement,
+            relative_to=relative_to,
+            equalize_group=(),
+        )
+
+    def _add_plotly(
+        self,
+        figure: go.Figure,
+        *,
+        config: Mapping[str, Any] | None,
+        pane_id: str | None,
+        title: str,
+        visible: bool,
+        placement: ViewportPanePlacement,
+        relative_to: str,
+        equalize_group: tuple[str, ...],
+    ) -> ViewportPlotlyHandle:
         pane_id = self._validate_pane_declaration(
             pane_id, title, visible, placement, relative_to
         )
@@ -515,10 +659,61 @@ class ViewportApi:
                 props=props,
                 placement=placement,
                 relative_to=relative_to,
+                equalize_group=equalize_group,
             ),
             relative_to,
         )
         return handle
+
+    def add_row(
+        self,
+        *,
+        placement: ViewportPanePlacement = "right",
+        relative_to: str = "scene",
+    ) -> ViewportPaneGroup:
+        """Create a group that lays out added panes side by side with equal
+        widths.
+
+        Panes added through the returned group's ``add_image`` and
+        ``add_plotly`` methods are placed along a shared row and re-divided
+        equally on each addition, so three panes yield exact thirds. The
+        placement arguments position the group's first pane; like all
+        placement hints, they only apply when the browser has no saved
+        arrangement for these panes.
+
+        Args:
+            placement: Initial split edge for the group, relative to
+                relative_to.
+            relative_to: Visible pane used for the group's initial placement.
+
+        Returns:
+            Group for adding equally sized panes.
+        """
+
+        return ViewportPaneGroup(self, "row", placement, relative_to)
+
+    def add_column(
+        self,
+        *,
+        placement: ViewportPanePlacement = "right",
+        relative_to: str = "scene",
+    ) -> ViewportPaneGroup:
+        """Create a group that lays out added panes stacked with equal
+        heights.
+
+        The column counterpart of :meth:`add_row`; see it for placement
+        semantics.
+
+        Args:
+            placement: Initial split edge for the group, relative to
+                relative_to.
+            relative_to: Visible pane used for the group's initial placement.
+
+        Returns:
+            Group for adding equally sized panes.
+        """
+
+        return ViewportPaneGroup(self, "column", placement, relative_to)
 
 
 def _validate_fit(value: object) -> ViewportPaneFit:

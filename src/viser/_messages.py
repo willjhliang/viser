@@ -2035,6 +2035,9 @@ class ViewportImageMessage(
     props: ViewportImageProps
     placement: Literal["left", "right", "top", "bottom"]
     relative_to: str
+    equalize_group: Tuple[str, ...]
+    """Sibling pane IDs whose combined share, including this pane's, is
+    redistributed equally on insertion. Empty for standalone panes."""
 
 
 @dataclasses.dataclass
@@ -2061,6 +2064,9 @@ class ViewportPlotlyMessage(
     props: ViewportPlotlyProps
     placement: Literal["left", "right", "top", "bottom"]
     relative_to: str
+    equalize_group: Tuple[str, ...]
+    """Sibling pane IDs whose combined share, including this pane's, is
+    redistributed equally on insertion. Empty for standalone panes."""
 
 
 @dataclasses.dataclass

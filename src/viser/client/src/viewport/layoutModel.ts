@@ -616,3 +616,51 @@ export function setViewportSplitWeights(
   const root = setSplitWeightsAtPath(layout.root, path, weights);
   return root === layout.root ? layout : { ...layout, root };
 }
+
+function equalizePanesInNode(
+  node: ViewportLayoutNode,
+  paneIds: ReadonlySet<string>,
+): ViewportLayoutNode {
+  if (node.type === "pane") return node;
+
+  const children = node.children.map((child) =>
+    equalizePanesInNode(child, paneIds),
+  );
+  let result =
+    children.every((child, index) => child === node.children[index])
+      ? node
+      : { ...node, children };
+
+  const memberIndices = result.children.flatMap((child, index) =>
+    child.type === "pane" && paneIds.has(child.pane_id) ? [index] : [],
+  );
+  if (memberIndices.length >= 2) {
+    const weights = normalizeViewportWeights(
+      result.weights,
+      result.children.length,
+    );
+    const combined = memberIndices.reduce(
+      (sum, index) => sum + weights[index],
+      0,
+    );
+    const share = combined / memberIndices.length;
+    memberIndices.forEach((index) => (weights[index] = share));
+    result = { ...result, weights };
+  }
+  return result;
+}
+
+/**
+ * Redistribute the combined weight of the named panes equally, wherever two
+ * or more of them are leaves of the same split. Panes outside the group keep
+ * their exact shares; named panes that are missing or not siblings are left
+ * untouched.
+ */
+export function equalizeViewportPanes(
+  layout: ViewportLayout,
+  paneIds: readonly string[],
+): ViewportLayout {
+  if (paneIds.length < 2) return layout;
+  const root = equalizePanesInNode(layout.root, new Set(paneIds));
+  return root === layout.root ? layout : { ...layout, root };
+}
