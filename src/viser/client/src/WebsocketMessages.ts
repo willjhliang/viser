@@ -1673,6 +1673,66 @@ export interface SceneNodeUpdateMessage {
   name: string;
   updates: { [key: string]: any };
 }
+/** Create a native image pane in the viewport workspace.
+ *
+ * (automatically generated)
+ */
+export interface ViewportImageMessage {
+  type: "ViewportImageMessage";
+  pane_id: string;
+  placement: "left" | "right" | "top" | "bottom";
+  relative_to: string;
+  equalize_group: string[];
+  props: {
+    _data: Uint8Array<ArrayBuffer>;
+    _format: "jpeg" | "png";
+    title: string;
+    visible: boolean;
+    fit: "contain" | "cover" | "fill";
+  };
+}
+/** Create a native Plotly pane in the viewport workspace.
+ *
+ * (automatically generated)
+ */
+export interface ViewportPlotlyMessage {
+  type: "ViewportPlotlyMessage";
+  pane_id: string;
+  placement: "left" | "right" | "top" | "bottom";
+  relative_to: string;
+  equalize_group: string[];
+  props: {
+    _plotly_json_str: string;
+    _theme_templates: string;
+    title: string;
+    visible: boolean;
+  };
+}
+/** Update one or more properties of a viewport pane.
+ *
+ * (automatically generated)
+ */
+export interface ViewportPaneUpdateMessage {
+  type: "ViewportPaneUpdateMessage";
+  pane_id: string;
+  updates: { [key: string]: any };
+}
+/** Remove a viewport pane.
+ *
+ * (automatically generated)
+ */
+export interface ViewportPaneRemoveMessage {
+  type: "ViewportPaneRemoveMessage";
+  pane_id: string;
+}
+/** Authoritative pane IDs used to reconcile browser-persisted layouts.
+ *
+ * (automatically generated)
+ */
+export interface ViewportPaneSnapshotMessage {
+  type: "ViewportPaneSnapshotMessage";
+  pane_ids: string[];
+}
 /** Message from server->client to configure parts of the GUI.
  *
  * (automatically generated)
@@ -1924,66 +1984,6 @@ export interface CommandTriggerMessage {
   type: "CommandTriggerMessage";
   uuid: string;
 }
-/** Create a native image pane in the viewport workspace.
- *
- * (automatically generated)
- */
-export interface ViewportImageMessage {
-  type: "ViewportImageMessage";
-  pane_id: string;
-  props: {
-    _data: Uint8Array<ArrayBuffer>;
-    _format: "jpeg" | "png";
-    title: string;
-    visible: boolean;
-    fit: "contain" | "cover" | "fill";
-  };
-  placement: "left" | "right" | "top" | "bottom";
-  relative_to: string;
-  equalize_group: string[];
-}
-/** Create a native Plotly pane in the viewport workspace.
- *
- * (automatically generated)
- */
-export interface ViewportPlotlyMessage {
-  type: "ViewportPlotlyMessage";
-  pane_id: string;
-  props: {
-    _plotly_json_str: string;
-    _theme_templates: string;
-    title: string;
-    visible: boolean;
-  };
-  placement: "left" | "right" | "top" | "bottom";
-  relative_to: string;
-  equalize_group: string[];
-}
-/** Update one or more properties of a viewport pane.
- *
- * (automatically generated)
- */
-export interface ViewportPaneUpdateMessage {
-  type: "ViewportPaneUpdateMessage";
-  pane_id: string;
-  updates: { [key: string]: any };
-}
-/** Remove a viewport pane.
- *
- * (automatically generated)
- */
-export interface ViewportPaneRemoveMessage {
-  type: "ViewportPaneRemoveMessage";
-  pane_id: string;
-}
-/** Authoritative pane IDs used to reconcile browser-persisted layouts.
- *
- * (automatically generated)
- */
-export interface ViewportPaneSnapshotMessage {
-  type: "ViewportPaneSnapshotMessage";
-  pane_ids: string[];
-}
 
 export type Message =
   | CameraFrustumMessage
@@ -2076,6 +2076,11 @@ export type Message =
   | GuiButtonHoldMessage
   | GuiUpdateMessage
   | SceneNodeUpdateMessage
+  | ViewportImageMessage
+  | ViewportPlotlyMessage
+  | ViewportPaneUpdateMessage
+  | ViewportPaneRemoveMessage
+  | ViewportPaneSnapshotMessage
   | ThemeConfigurationMessage
   | GetRenderRequestMessage
   | GetRenderResponseMessage
@@ -2090,12 +2095,7 @@ export type Message =
   | RegisterCommandMessage
   | CommandUpdateMessage
   | RemoveCommandMessage
-  | CommandTriggerMessage
-  | ViewportImageMessage
-  | ViewportPlotlyMessage
-  | ViewportPaneUpdateMessage
-  | ViewportPaneRemoveMessage
-  | ViewportPaneSnapshotMessage;
+  | CommandTriggerMessage;
 export type SceneNodeMessage =
   | CameraFrustumMessage
   | GlbMessage
