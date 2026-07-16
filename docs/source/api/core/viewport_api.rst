@@ -75,3 +75,7 @@ Reference
 .. autoclass:: viser.ViewportImageHandle
    :members:
    :undoc-members:
+
+.. autoclass:: viser.ViewportPlotlyHandle
+   :members:
+   :undoc-members:

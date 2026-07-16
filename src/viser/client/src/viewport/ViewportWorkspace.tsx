@@ -24,7 +24,14 @@ import {
   pointInsidePane,
   resizeLayoutAtGridLine,
 } from "./gridLayout";
-import { ViewportImagePane, ViewportPane } from "./ViewportState";
+import { useComputedColorScheme } from "@mantine/core";
+import { useElementSize } from "@mantine/hooks";
+
+import {
+  ViewportImagePane,
+  ViewportPane,
+  ViewportPlotlyPane,
+} from "./ViewportState";
 
 const PANE_DRAG_THRESHOLD_PX = 4;
 const PANE_BORDER_SIZE_PX = 1;
@@ -1051,11 +1058,119 @@ const paneRendererRegistry: Record<
   scene: ({ sceneContent }) => <>{sceneContent}</>,
   image: ({ pane }) =>
     pane.kind === "image" ? <ViewportImageRenderer pane={pane} /> : null,
+  plotly: ({ pane }) =>
+    pane.kind === "plotly" ? <ViewportPlotlyRenderer pane={pane} /> : null,
 };
 
 function ViewportPaneRenderer(props: PaneRendererProps) {
   const Renderer = paneRendererRegistry[props.pane.kind];
   return <Renderer {...props} />;
+}
+
+/** Interactive Plotly renderer that always fills its pane, tracking pane
+ * resizes via ResizeObserver. */
+function ViewportPlotlyRenderer({ pane }: { pane: ViewportPlotlyPane }) {
+  const { ref, width, height } = useElementSize();
+  // Figures without an explicit template follow viser's theme, which can
+  // change at runtime (server-configured, URL-forced, or auto-detected).
+  const colorScheme = useComputedColorScheme("light");
+  // Used to imperatively call ``Plotly.react``, matching the control-panel
+  // Plotly component (see components/PlotlyComponent.tsx).
+  const plotRef = React.useRef<HTMLDivElement>(null);
+
+  const themeTemplates = React.useMemo(
+    () =>
+      pane.props._theme_templates === ""
+        ? null
+        : JSON.parse(pane.props._theme_templates),
+    [pane.props._theme_templates],
+  );
+
+  // Parse JSON only when the figure changes; resizes reuse the parsed value.
+  const plotJson = React.useMemo(() => {
+    if (pane.props._plotly_json_str === "") return null;
+    const parsed = JSON.parse(pane.props._plotly_json_str);
+    // Keep zoom/selection state across figure updates, see
+    // https://plotly.com/javascript/uirevision/.
+    parsed.layout = { ...parsed.layout, uirevision: "true" };
+    return parsed;
+  }, [pane.props._plotly_json_str]);
+
+  const layoutTemplate =
+    plotJson?.layout?.template ??
+    (themeTemplates === null
+      ? undefined
+      : (themeTemplates[colorScheme] ?? themeTemplates.light));
+
+  React.useEffect(() => {
+    if (plotJson === null || width === 0 || height === 0) return;
+    // Plotly is loaded globally by a RunJavascriptMessage that the server
+    // queues before any Plotly pane; poll briefly in case a render races it.
+    let cancelled = false;
+    const render = () => {
+      if (cancelled || plotRef.current === null) return;
+      const plotly = (
+        window as unknown as {
+          Plotly?: {
+            react(
+              node: HTMLElement,
+              data: unknown,
+              layout: unknown,
+              config: unknown,
+            ): void;
+          };
+        }
+      ).Plotly;
+      if (plotly === undefined) {
+        setTimeout(render, 50);
+        return;
+      }
+      plotly.react(
+        plotRef.current,
+        plotJson.data,
+        {
+          ...plotJson.layout,
+          template: layoutTemplate,
+          width,
+          height,
+          autosize: false,
+        },
+        plotJson.config,
+      );
+    };
+    render();
+    return () => {
+      cancelled = true;
+    };
+  }, [plotJson, layoutTemplate, width, height]);
+
+  // Purge the Plotly instance on unmount so event listeners and (for gl
+  // traces) WebGL contexts don't leak each time a pane is removed.
+  React.useEffect(() => {
+    const node = plotRef.current;
+    return () => {
+      const plotly = (
+        window as unknown as { Plotly?: { purge(n: HTMLElement): void } }
+      ).Plotly;
+      if (node !== null && plotly !== undefined) {
+        plotly.purge(node);
+      }
+    };
+  }, []);
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: "absolute",
+        inset: 0,
+        overflow: "hidden",
+        background: "var(--mantine-color-body)",
+      }}
+    >
+      <div ref={plotRef} />
+    </div>
+  );
 }
 
 function ViewportImageRenderer({ pane }: { pane: ViewportImagePane }) {

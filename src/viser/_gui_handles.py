@@ -1059,6 +1059,19 @@ class GuiDividerHandle(_GuiHandle[None], GuiDividerProps):
     """Handle for updating and removing dividers."""
 
 
+def _plotly_json_with_config(
+    figure: go.Figure, config: Mapping[str, Any] | None
+) -> str:
+    """Serialize a Plotly figure to JSON, merging in an optional config dict."""
+    json_str = figure.to_json()
+    assert isinstance(json_str, str)
+    if config is not None:
+        plot_dict = json.loads(json_str)
+        plot_dict["config"] = {**plot_dict.get("config", {}), **config}
+        json_str = json.dumps(plot_dict)
+    return json_str
+
+
 class GuiPlotlyHandle(_GuiHandle[None], GuiPlotlyProps):
     """Handle for updating and removing Plotly figures."""
 
@@ -1081,13 +1094,7 @@ class GuiPlotlyHandle(_GuiHandle[None], GuiPlotlyProps):
     @figure.setter
     def figure(self, figure: go.Figure) -> None:
         self._figure = figure
-        json_str = figure.to_json()
-        assert isinstance(json_str, str)
-        if self._config is not None:
-            plot_dict = json.loads(json_str)
-            plot_dict["config"] = {**plot_dict.get("config", {}), **self._config}
-            json_str = json.dumps(plot_dict)
-        self._plotly_json_str = json_str
+        self._plotly_json_str = _plotly_json_with_config(figure, self._config)
 
 
 class GuiUplotHandle(_GuiHandle[None], GuiUplotProps):

@@ -25,6 +25,15 @@ export interface ViewportImageProps {
   fit: ViewportImageFit;
 }
 
+export interface ViewportPlotlyProps {
+  _plotly_json_str: string;
+  /** JSON string with "light"/"dark" template definitions, applied when the
+   * figure does not specify a template. */
+  _theme_templates: string;
+  title: string;
+  visible: boolean;
+}
+
 export interface ViewportScenePane {
   kind: "scene";
   paneId: typeof VIEWPORT_SCENE_PANE_ID;
@@ -37,7 +46,16 @@ export interface ViewportImagePane {
   props: ViewportImageProps;
 }
 
-export type ViewportPane = ViewportScenePane | ViewportImagePane;
+export interface ViewportPlotlyPane {
+  kind: "plotly";
+  paneId: string;
+  props: ViewportPlotlyProps;
+}
+
+/** Server-declared panes that render content other than the 3D scene. */
+export type ViewportContentPane = ViewportImagePane | ViewportPlotlyPane;
+
+export type ViewportPane = ViewportScenePane | ViewportContentPane;
 
 export interface ViewportState {
   panes: Record<string, ViewportPane>;
@@ -52,6 +70,17 @@ export interface ViewportImageDeclaration {
   relative_to: string;
 }
 
+export interface ViewportPlotlyDeclaration {
+  pane_id: string;
+  props: ViewportPlotlyProps;
+  placement: ViewportPanePlacement;
+  relative_to: string;
+}
+
+export type ViewportPaneUpdates = Partial<
+  ViewportImageProps & ViewportPlotlyProps
+>;
+
 export interface ViewportActions {
   /** Clear all temporal pane state, including layout (used by file playback). */
   reset: () => void;
@@ -60,7 +89,8 @@ export interface ViewportActions {
   /** Select and restore the layout storage namespace for a websocket server. */
   setPersistenceServer: (serverUrl: string) => void;
   addImagePane: (message: ViewportImageDeclaration) => void;
-  updatePane: (paneId: string, updates: Partial<ViewportImageProps>) => void;
+  addPlotlyPane: (message: ViewportPlotlyDeclaration) => void;
+  updatePane: (paneId: string, updates: ViewportPaneUpdates) => void;
   removePane: (paneId: string) => void;
   setPaneSnapshot: (paneIds: readonly string[]) => void;
   commitUserLayout: (layout: ViewportLayout) => void;
@@ -194,6 +224,51 @@ export function useViewportState(
       return true;
     };
 
+    const addContentPane = (
+      message: {
+        pane_id: string;
+        placement: ViewportPanePlacement;
+        relative_to: string;
+      },
+      pane: ViewportContentPane,
+    ): void => {
+      const paneId = message.pane_id;
+      if (paneId === VIEWPORT_SCENE_PANE_ID || paneId.length === 0) return;
+      authoritativePaneIdsRef.current?.add(paneId);
+
+      const state = store.get();
+      const panes = copyPaneRecord(state.panes);
+      panes[paneId] = pane;
+
+      let layout = state.layout;
+      if (!pane.props.visible) {
+        layout = removeViewportPane(layout, paneId);
+      } else if (!hasViewportPane(layout, paneId)) {
+        const layoutPaneIds = collectViewportPaneIds(layout);
+        const fallbackPaneId = layoutPaneIds[layoutPaneIds.length - 1];
+        const relativeTo = hasViewportPane(layout, message.relative_to)
+          ? message.relative_to
+          : (fallbackPaneId ?? VIEWPORT_SCENE_PANE_ID);
+        layout = insertViewportPane(
+          layout,
+          paneId,
+          relativeTo,
+          message.placement,
+        );
+      }
+
+      if (!scenePaneIsVisible(panes)) {
+        layout = reconcilePaneLayout(
+          layout,
+          panes,
+          authoritativePaneIdsRef.current,
+        );
+      }
+
+      if (commitLayout(layout)) store.set({ panes, layout });
+      else store.set({ panes });
+    };
+
     return {
       reset: () => {
         authoritativePaneIdsRef.current = null;
@@ -232,45 +307,19 @@ export function useViewportState(
       },
 
       addImagePane: (message) => {
-        const paneId = message.pane_id;
-        if (paneId === VIEWPORT_SCENE_PANE_ID || paneId.length === 0) return;
-        authoritativePaneIdsRef.current?.add(paneId);
-
-        const state = store.get();
-        const panes = copyPaneRecord(state.panes);
-        panes[paneId] = {
+        addContentPane(message, {
           kind: "image",
-          paneId,
+          paneId: message.pane_id,
           props: message.props,
-        };
+        });
+      },
 
-        let layout = state.layout;
-        if (!message.props.visible) {
-          layout = removeViewportPane(layout, paneId);
-        } else if (!hasViewportPane(layout, paneId)) {
-          const layoutPaneIds = collectViewportPaneIds(layout);
-          const fallbackPaneId = layoutPaneIds[layoutPaneIds.length - 1];
-          const relativeTo = hasViewportPane(layout, message.relative_to)
-            ? message.relative_to
-            : (fallbackPaneId ?? VIEWPORT_SCENE_PANE_ID);
-          layout = insertViewportPane(
-            layout,
-            paneId,
-            relativeTo,
-            message.placement,
-          );
-        }
-
-        if (!scenePaneIsVisible(panes)) {
-          layout = reconcilePaneLayout(
-            layout,
-            panes,
-            authoritativePaneIdsRef.current,
-          );
-        }
-
-        if (commitLayout(layout)) store.set({ panes, layout });
-        else store.set({ panes });
+      addPlotlyPane: (message) => {
+        addContentPane(message, {
+          kind: "plotly",
+          paneId: message.pane_id,
+          props: message.props,
+        });
       },
 
       updatePane: (paneId, updates) => {
@@ -297,7 +346,12 @@ export function useViewportState(
           return;
         }
 
-        const updatedPane = { ...pane, props: { ...pane.props, ...updates } };
+        // The server only sends updates matching the pane's kind, which the
+        // type system cannot prove across the content-pane union.
+        const updatedPane = {
+          ...pane,
+          props: { ...pane.props, ...updates },
+        } as ViewportContentPane;
         panes[paneId] = updatedPane;
 
         let layout = state.layout;

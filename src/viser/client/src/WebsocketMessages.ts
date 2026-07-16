@@ -1941,6 +1941,22 @@ export interface ViewportImageMessage {
   placement: "left" | "right" | "top" | "bottom";
   relative_to: string;
 }
+/** Create a native Plotly pane in the viewport workspace.
+ *
+ * (automatically generated)
+ */
+export interface ViewportPlotlyMessage {
+  type: "ViewportPlotlyMessage";
+  pane_id: string;
+  props: {
+    _plotly_json_str: string;
+    _theme_templates: string;
+    title: string;
+    visible: boolean;
+  };
+  placement: "left" | "right" | "top" | "bottom";
+  relative_to: string;
+}
 /** Update one or more properties of a viewport pane.
  *
  * (automatically generated)
@@ -2074,6 +2090,7 @@ export type Message =
   | RemoveCommandMessage
   | CommandTriggerMessage
   | ViewportImageMessage
+  | ViewportPlotlyMessage
   | ViewportPaneUpdateMessage
   | ViewportPaneRemoveMessage
   | ViewportPaneSnapshotMessage;

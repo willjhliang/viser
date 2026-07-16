@@ -309,3 +309,164 @@ def test_late_image_update_cannot_mutate_reused_pane_id(
         finish_encode.set()
         if update_thread is not None:
             update_thread.join(timeout=2.0)
+
+
+def test_viewport_plotly_message_lifecycle() -> None:
+    assert _messages.ViewportPlotlyMessage.entity_type == "viewport"
+    assert _messages.ViewportPlotlyMessage.lifecycle_phase == "create"
+    assert _messages.ViewportPlotlyMessage.entity_id_field == "pane_id"
+    assert _messages.ViewportPlotlyMessage.include_in_scene_serialization is True
+
+
+def test_plotly_pane_lifecycle_and_updates(
+    viewport_server: viser.ViserServer,
+) -> None:
+    go = pytest.importorskip("plotly.graph_objects")
+    import json
+
+    server = viewport_server
+    handle = server.viewport.add_plotly(
+        go.Figure(data=[go.Scatter(x=[0, 1], y=[0, 1])]),
+        pane_id="loss-curve",
+        title="Loss",
+        config={"displayModeBar": False},
+    )
+    assert handle.pane_id == "loss-curve"
+    assert handle.title == "Loss"
+    assert handle.visible is True
+
+    creates = [
+        message
+        for message in _messages_in_buffer(server)
+        if isinstance(message, _messages.ViewportPlotlyMessage)
+    ]
+    assert len(creates) == 1
+    assert creates[0].pane_id == "loss-curve"
+    assert creates[0].props.title == "Loss"
+    plot_dict = json.loads(creates[0].props._plotly_json_str)
+    assert plot_dict["config"] == {"displayModeBar": False}
+    assert plot_dict["data"][0]["y"] == [0, 1]
+    assert _snapshot(server).pane_ids == ("loss-curve",)
+
+    # plotly.min.js must be queued before the pane that needs it.
+    run_js_ids = _message_ids(server, _messages.RunJavascriptMessage)
+    assert len(run_js_ids) == 1
+    assert run_js_ids[0] < _message_ids(server, _messages.ViewportPlotlyMessage)[0]
+
+    handle.figure = go.Figure(data=[go.Scatter(x=[0, 1], y=[1, 0])])
+    updates = [
+        message
+        for message in _messages_in_buffer(server)
+        if isinstance(message, _messages.ViewportPaneUpdateMessage)
+        and message.pane_id == "loss-curve"
+    ]
+    assert len(updates) == 1
+    updated_dict = json.loads(updates[0].updates["_plotly_json_str"])
+    assert updated_dict["data"][0]["y"] == [1, 0]
+    # The config passed at creation applies to updated figures too.
+    assert updated_dict["config"] == {"displayModeBar": False}
+
+    handle.remove()
+    assert _snapshot(server).pane_ids == ()
+    with pytest.raises(RuntimeError, match="removed"):
+        handle.figure = go.Figure()
+    with pytest.raises(RuntimeError, match="removed"):
+        handle.visible = False
+
+
+def test_plotly_pane_shares_validation_with_image_panes(
+    viewport_server: viser.ViserServer,
+) -> None:
+    go = pytest.importorskip("plotly.graph_objects")
+
+    server = viewport_server
+    figure = go.Figure()
+    server.viewport.add_plotly(figure, pane_id="plot")
+    with pytest.raises(ValueError, match="already exists"):
+        server.viewport.add_plotly(figure, pane_id="plot")
+    with pytest.raises(ValueError, match="already exists"):
+        server.viewport.add_image(np.zeros((2, 2, 3), dtype=np.uint8), pane_id="plot")
+    with pytest.raises(ValueError, match="reserved"):
+        server.viewport.add_plotly(figure, pane_id="scene")
+    with pytest.raises(ValueError, match="must not be empty"):
+        server.viewport.add_plotly(figure, pane_id="")
+    with pytest.raises(TypeError, match="must be a string"):
+        server.viewport.add_plotly(figure, pane_id=cast(Any, 123))
+    with pytest.raises(ValueError, match="Unknown or hidden"):
+        server.viewport.add_plotly(figure, relative_to="missing")
+    with pytest.raises(ValueError, match="placement"):
+        server.viewport.add_plotly(figure, placement=cast(Any, "middle"))
+
+    image_handle = server.viewport.add_image(
+        np.zeros((2, 2, 3), dtype=np.uint8), pane_id="camera"
+    )
+    assert _snapshot(server).pane_ids == ("plot", "camera")
+    assert isinstance(image_handle, viser.ViewportImageHandle)
+
+
+def test_plotly_js_sent_once_across_gui_and_viewport(
+    viewport_server: viser.ViserServer,
+) -> None:
+    go = pytest.importorskip("plotly.graph_objects")
+
+    server = viewport_server
+    server.viewport.add_plotly(go.Figure(), pane_id="a")
+    server.viewport.add_plotly(go.Figure(), pane_id="b")
+    server.gui.add_plotly(go.Figure())
+    run_js = _message_ids(server, _messages.RunJavascriptMessage)
+    assert len(run_js) == 1
+
+
+def test_plotly_pane_theme_template_defaults(
+    viewport_server: viser.ViserServer,
+) -> None:
+    go = pytest.importorskip("plotly.graph_objects")
+    import json
+
+    import plotly.io as pio
+
+    server = viewport_server
+
+    def pane_create(pane_id: str) -> _messages.ViewportPlotlyMessage:
+        creates = [
+            message
+            for message in _messages_in_buffer(server)
+            if isinstance(message, _messages.ViewportPlotlyMessage)
+            and message.pane_id == pane_id
+        ]
+        assert len(creates) == 1
+        return creates[0]
+
+    # The stock default template is stripped so the client can substitute a
+    # theme-matched template, sent alongside the figure.
+    handle = server.viewport.add_plotly(go.Figure(), pane_id="default")
+    create = pane_create("default")
+    assert "template" not in json.loads(create.props._plotly_json_str)["layout"]
+    themes = json.loads(create.props._theme_templates)
+    assert themes["light"]["layout"]["plot_bgcolor"] == "white"
+    assert (
+        themes["dark"]["layout"]["paper_bgcolor"]
+        == pio.templates["plotly_dark"].layout.paper_bgcolor
+    )
+
+    # Explicitly chosen templates are preserved.
+    server.viewport.add_plotly(
+        go.Figure(layout=go.Layout(template="plotly_dark")), pane_id="dark"
+    )
+    dark_layout = json.loads(pane_create("dark").props._plotly_json_str)["layout"]
+    assert (
+        dark_layout["template"]["layout"]["paper_bgcolor"]
+        == pio.templates["plotly_dark"].layout.paper_bgcolor
+    )
+
+    # Updates through the handle strip the stock template the same way.
+    handle.figure = go.Figure(data=[go.Scatter(x=[0], y=[0])])
+    updates = [
+        message
+        for message in _messages_in_buffer(server)
+        if isinstance(message, _messages.ViewportPaneUpdateMessage)
+        and message.pane_id == "default"
+    ]
+    assert len(updates) == 1
+    updated_layout = json.loads(updates[0].updates["_plotly_json_str"])["layout"]
+    assert "template" not in updated_layout

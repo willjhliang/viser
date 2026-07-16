@@ -2038,6 +2038,32 @@ class ViewportImageMessage(
 
 
 @dataclasses.dataclass
+class ViewportPlotlyProps:
+    """Properties for a native Plotly viewport pane."""
+
+    _plotly_json_str: str
+    _theme_templates: str
+    """JSON string with "light" and "dark" template definitions, applied by
+    the client when the figure does not specify a template."""
+    title: str
+    visible: bool
+
+
+@dataclasses.dataclass
+class ViewportPlotlyMessage(
+    Message,
+    entity=EntityLifecycle("viewport", "create", "pane_id"),
+    include_in_scene_serialization=True,
+):
+    """Create a native Plotly pane in the viewport workspace."""
+
+    pane_id: str
+    props: ViewportPlotlyProps
+    placement: Literal["left", "right", "top", "bottom"]
+    relative_to: str
+
+
+@dataclasses.dataclass
 class ViewportPaneUpdateMessage(
     Message,
     entity=EntityLifecycle("viewport", "update_dict", "pane_id"),

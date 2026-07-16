@@ -98,8 +98,13 @@ function useMessageHandler() {
   const addCommand = viewer.guiActions.addCommand;
   const updateCommand = viewer.guiActions.updateCommand;
   const removeCommand = viewer.guiActions.removeCommand;
-  const { addImagePane, updatePane, removePane, setPaneSnapshot } =
-    viewer.viewportActions;
+  const {
+    addImagePane,
+    addPlotlyPane,
+    updatePane,
+    removePane,
+    setPaneSnapshot,
+  } = viewer.viewportActions;
 
   // Same as addSceneNode, but make a parent in the form of a dummy coordinate
   // frame if it doesn't exist yet.
@@ -664,6 +669,10 @@ function useMessageHandler() {
       }
       case "ViewportImageMessage": {
         addImagePane(message);
+        return;
+      }
+      case "ViewportPlotlyMessage": {
+        addPlotlyPane(message);
         return;
       }
       case "ViewportPaneUpdateMessage": {

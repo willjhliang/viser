@@ -1105,6 +1105,33 @@ class GuiApi:
         return handle
 
     @deprecated_positional_shim
+    def _ensure_plotly_js_sent(self) -> None:
+        """Send plotly.min.js to clients, once. Plotly figures cannot be
+        rendered client-side until this arrives."""
+        if self._setup_plotly_js:
+            return
+
+        # Check if plotly is installed.
+        try:
+            import plotly
+        except ImportError:
+            raise ImportError(
+                "You must have the `plotly` package installed to use the Plotly GUI element."
+            )
+
+        # Check that plotly.min.js exists.
+        plotly_path = Path(plotly.__file__).parent / "package_data" / "plotly.min.js"
+        assert plotly_path.exists(), f"Could not find plotly.min.js at {plotly_path}."
+
+        # Send it over!
+        plotly_js = plotly_path.read_text(encoding="utf-8")
+        self._websock_interface.queue_message(
+            _messages.RunJavascriptMessage(source=plotly_js)
+        )
+
+        # Update the flag so we don't send it again.
+        self._setup_plotly_js = True
+
     def add_plotly(
         self,
         figure: go.Figure,
@@ -1137,31 +1164,7 @@ class GuiApi:
 
         # If plotly.min.js hasn't been sent to the client yet, the client won't be able
         # to render the plot. Send this large file now! (~3MB)
-        if not self._setup_plotly_js:
-            # Check if plotly is installed.
-            try:
-                import plotly
-            except ImportError:
-                raise ImportError(
-                    "You must have the `plotly` package installed to use the Plotly GUI element."
-                )
-
-            # Check that plotly.min.js exists.
-            plotly_path = (
-                Path(plotly.__file__).parent / "package_data" / "plotly.min.js"
-            )
-            assert plotly_path.exists(), (
-                f"Could not find plotly.min.js at {plotly_path}."
-            )
-
-            # Send it over!
-            plotly_js = plotly_path.read_text(encoding="utf-8")
-            self._websock_interface.queue_message(
-                _messages.RunJavascriptMessage(source=plotly_js)
-            )
-
-            # Update the flag so we don't send it again.
-            self._setup_plotly_js = True
+        self._ensure_plotly_js_sent()
 
         # After plotly.min.js has been sent, we can send the plotly figure.
         # Empty string for `plotly_json_str` is a signal to the client to render nothing.

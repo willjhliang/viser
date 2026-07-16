@@ -851,3 +851,139 @@ def test_floating_gui_stays_above_viewport_chrome(
         {"x": probe_x, "y": probe_y},
     )
     assert floating_is_on_top
+
+
+def test_plotly_pane_is_interactive_and_fills_pane_across_resizes(
+    viser_page: Page, viser_server: viser.ViserServer
+) -> None:
+    """A Plotly pane renders interactively and always fills its pane."""
+
+    import plotly.graph_objects as go
+
+    handle = viser_server.viewport.add_plotly(
+        go.Figure(data=[go.Scatter(x=[0, 1, 2, 3], y=[0, 1, 4, 9], mode="lines")]),
+        pane_id="plot",
+        title="Plot",
+    )
+
+    pane_selector = '[data-viewport-pane="plot"]'
+    plot_selector = f"{pane_selector} .js-plotly-plot"
+    expect(viser_page.locator(pane_selector)).to_be_visible(timeout=10_000)
+    expect(viser_page.locator(plot_selector)).to_be_visible(timeout=10_000)
+
+    def wait_for_plot_to_fill_pane() -> None:
+        viser_page.wait_for_function(
+            """() => {
+                const pane = document.querySelector(
+                    '[data-viewport-pane-content="plot"]');
+                const plot = pane?.querySelector('.js-plotly-plot');
+                if (!pane || !plot) return false;
+                const paneRect = pane.getBoundingClientRect();
+                const plotRect = plot.getBoundingClientRect();
+                return (
+                    paneRect.width > 0 &&
+                    paneRect.height > 0 &&
+                    Math.abs(paneRect.width - plotRect.width) < 2.5 &&
+                    Math.abs(paneRect.height - plotRect.height) < 2.5
+                );
+            }""",
+            timeout=10_000,
+        )
+
+    def x_axis_range() -> list[float]:
+        return viser_page.eval_on_selector(
+            plot_selector,
+            "(plot) => plot._fullLayout.xaxis.range.map(Number)",
+        )
+
+    wait_for_plot_to_fill_pane()
+
+    # Live figure updates from the server appear without a reload.
+    updated = go.Figure(
+        data=[
+            go.Scatter(x=[0, 1, 2, 3], y=[0, 1, 4, 9], mode="lines"),
+            go.Scatter(x=[0, 1, 2, 3], y=[9, 4, 1, 0], mode="lines"),
+        ]
+    )
+    handle.figure = updated
+    viser_page.wait_for_function(
+        f"""() => document.querySelectorAll(
+            '{plot_selector} .scatterlayer .trace').length === 2""",
+        timeout=10_000,
+    )
+
+    # Drag-zoom inside the plot area: the x-axis range must narrow, proving
+    # the pane hosts a live Plotly instance rather than a static image.
+    initial_range = x_axis_range()
+    plot_box = _box(viser_page, plot_selector)
+    center_x = plot_box["x"] + plot_box["width"] / 2
+    center_y = plot_box["y"] + plot_box["height"] / 2
+    viser_page.mouse.move(center_x - plot_box["width"] / 5, center_y)
+    viser_page.mouse.down()
+    viser_page.mouse.move(center_x + plot_box["width"] / 5, center_y, steps=8)
+    viser_page.mouse.up()
+    viser_page.wait_for_function(
+        f"""() => {{
+            const plot = document.querySelector('{plot_selector}');
+            const range = plot?._fullLayout?.xaxis?.range;
+            if (!range) return false;
+            return range[1] - range[0] < {initial_range[1] - initial_range[0]} * 0.9;
+        }}""",
+        timeout=10_000,
+    )
+    zoomed_range = x_axis_range()
+
+    # Shrinking the browser window shrinks the pane; the plot must track it
+    # while preserving interaction state (zoom) through uirevision.
+    viser_page.set_viewport_size({"width": 640, "height": 420})
+    _wait_for_layout_frame(viser_page)
+    wait_for_plot_to_fill_pane()
+    assert x_axis_range() == zoomed_range
+
+    viser_page.set_viewport_size({"width": 960, "height": 600})
+    _wait_for_layout_frame(viser_page)
+    wait_for_plot_to_fill_pane()
+
+
+def test_plotly_pane_template_tracks_viser_theme(
+    viser_page: Page, viser_server: viser.ViserServer
+) -> None:
+    """Untemplated figures follow viser's light/dark theme live."""
+
+    import plotly.graph_objects as go
+
+    viser_server.viewport.add_plotly(
+        go.Figure(data=[go.Scatter(x=[0, 1], y=[0, 1])]),
+        pane_id="plot",
+        title="Plot",
+    )
+    templated = viser_server.viewport.add_plotly(
+        go.Figure(layout=go.Layout(template="plotly")),
+        pane_id="templated",
+        title="Templated",
+    )
+
+    def wait_for_paper_bgcolor(pane_id: str, expected: str) -> None:
+        viser_page.wait_for_function(
+            f"""() => {{
+                const plot = document.querySelector(
+                    '[data-viewport-pane="{pane_id}"] .js-plotly-plot');
+                return plot?._fullLayout?.paper_bgcolor === '{expected}';
+            }}""",
+            timeout=10_000,
+        )
+
+    # plotly_white in light mode, plotly_dark in dark mode, switched live.
+    wait_for_paper_bgcolor("plot", "white")
+    viser_server.gui.configure_theme(dark_mode=True)
+    wait_for_paper_bgcolor("plot", "rgb(17,17,17)")
+    viser_server.gui.configure_theme(dark_mode=False)
+    wait_for_paper_bgcolor("plot", "white")
+
+    # An explicitly templated figure keeps its template in both modes. The
+    # stock "plotly" template is indistinguishable from an untouched figure,
+    # so it is themed like one; any other explicit template is preserved.
+    templated.figure = go.Figure(layout=go.Layout(template="seaborn"))
+    wait_for_paper_bgcolor("templated", "white")
+    viser_server.gui.configure_theme(dark_mode=True)
+    wait_for_paper_bgcolor("templated", "white")
