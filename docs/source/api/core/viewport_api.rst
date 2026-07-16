@@ -49,7 +49,7 @@ added. Setting ``scene_visible`` back to ``True`` restores the scene beside the
 2D panes.
 
 See the :download:`complete streaming example
-<../../../../examples/02_gui/11_viewport_images.py>`.
+<../../../../examples/02_gui/11_viewport_panes.py>`.
 
 Layout persistence
 ------------------
