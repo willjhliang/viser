@@ -9,6 +9,7 @@ import {
   dropViewportPane,
   equalizeViewportPanes,
   insertViewportPane,
+  normalizeViewportLayout,
   normalizeViewportWeights,
   reconcileViewportLayout,
   removeViewportPane,
@@ -73,6 +74,34 @@ describe("normalizeViewportWeights", () => {
     expect(normalizeViewportWeights([1], -1)).toEqual([]);
     expect(normalizeViewportWeights([1], 1.5)).toEqual([]);
   });
+
+  it("passes already-normalized weights through bit-identically", () => {
+    const thirds = [1 / 3, 1 / 3, 1 - 2 / 3];
+    expect(normalizeViewportWeights(thirds)).toEqual(thirds);
+    const uneven = [0.7, 0.2, 0.1 - 1e-16];
+    expect(normalizeViewportWeights(uneven)).toEqual(uneven);
+  });
+});
+
+describe("normalizeViewportLayout", () => {
+  it("wraps stored layouts that lack the scene pane", () => {
+    const normalized = normalizeViewportLayout({
+      version: 1,
+      root: { type: "pane", pane_id: "image" },
+    });
+    expect(normalized).toEqual({
+      version: 1,
+      root: {
+        type: "split",
+        direction: "row",
+        children: [
+          { type: "pane", pane_id: VIEWPORT_SCENE_PANE_ID },
+          { type: "pane", pane_id: "image" },
+        ],
+        weights: [0.5, 0.5],
+      },
+    });
+  });
 });
 
 describe("reconcileViewportLayout", () => {
@@ -132,9 +161,7 @@ describe("reconcileViewportLayout", () => {
   });
 
   it("omits a hidden scene but retains it as the empty fallback", () => {
-    const sceneAndImage = layout(
-      split("row", [pane("scene"), pane("image")]),
-    );
+    const sceneAndImage = layout(split("row", [pane("scene"), pane("image")]));
     expect(
       collectViewportPaneIds(
         reconcileViewportLayout(

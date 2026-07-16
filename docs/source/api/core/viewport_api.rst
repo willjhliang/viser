@@ -32,7 +32,8 @@ support arrow-key resizing, and a
 focused pane label can swap with a neighbor using ``Shift`` plus an arrow key.
 
 Hiding a pane collapses its split and expands the remaining panes. Showing it
-again inserts it back into the workspace.
+again inserts it back beside the scene rather than at its previous position;
+the browser's saved arrangement is restored on the next reload.
 
 Scene pane visibility
 ---------------------

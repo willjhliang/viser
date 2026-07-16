@@ -9,7 +9,10 @@ import {
 } from "./layoutModel";
 
 // LCM(2..6): splitting the full width into 2-6 equal panes lands exactly on
-// integer grid lines.
+// integer grid lines. This exactness assumes the nominal grid; when minimum
+// pane sizes force a smaller cell (e.g. very short workspaces), the column
+// count stops being a multiple of 60 and equal splits round to the nearest
+// grid line instead.
 const NOMINAL_GRID_COLUMNS = 60;
 const MIN_PANE_COLUMNS = 4;
 const MIN_PANE_ROWS = 3;
@@ -204,11 +207,7 @@ export function computeLayoutGeometry(
   return { panes, dividers };
 }
 
-export function pointInsidePane(
-  rect: GridRect,
-  x: number,
-  y: number,
-): boolean {
+export function pointInsidePane(rect: GridRect, x: number, y: number): boolean {
   return (
     x >= rect.x &&
     x < rect.x + rect.width &&

@@ -7,6 +7,7 @@ inside ``process_request`` and surface as a 500 with the websockets library's
 default failure message."""
 
 import gzip
+import hashlib
 import http.client
 import socket
 import time
@@ -101,16 +102,17 @@ def test_http_etag_revalidation(tmp_path: Path) -> None:
     payload = b"<html>cache me</html>" * 100
     (served_root / "index.html").write_bytes(payload)
 
-    port = _find_free_port()
     server = infra.WebsockServer(
         host="127.0.0.1",
-        port=port,
+        port=_find_free_port(),
         http_server_root=served_root,
         verbose=False,
     )
     server.start()
     try:
         time.sleep(0.1)
+        # start() may have fallen back to a nearby port if ours was taken.
+        port = server._port
         status, headers, body = _raw_get(
             "127.0.0.1", port, "/", {"Accept-Encoding": "identity"}
         )
@@ -148,6 +150,13 @@ def test_http_etag_revalidation(tmp_path: Path) -> None:
         assert gzip.decompress(body) == payload
         gzip_etag = headers["etag"]
         assert gzip_etag != identity_etag
+
+        # ETags must be deterministic across server restarts, or every
+        # restart would invalidate all client caches. For gzip this depends
+        # on compressing with mtime=0; recompute both tags independently.
+        assert identity_etag == f'"{hashlib.sha256(payload).hexdigest()}"'
+        expected_gzip = hashlib.sha256(gzip.compress(payload, mtime=0)).hexdigest()
+        assert gzip_etag == f'"{expected_gzip}"'
 
         assert (
             _raw_get(

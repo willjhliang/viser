@@ -700,6 +700,9 @@ class WebsockServer(WebsockMessageHandler):
 
             etag_matches = False
             for value in request.headers.get_all("If-None-Match"):
+                # Comma-splitting technically mis-parses entity-tags that
+                # contain commas; ours never do, and a foreign ETag can only
+                # produce a harmless 200 instead of a 304.
                 for candidate in value.split(","):
                     candidate = candidate.strip()
                     if candidate.startswith("W/"):

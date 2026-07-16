@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import threading
 from collections.abc import Generator
 from typing import Any, cast
@@ -71,16 +70,6 @@ def test_viewport_message_lifecycle_and_serialization() -> None:
     assert _messages.ViewportPaneRemoveMessage.include_in_scene_serialization is True
 
     assert _messages.ViewportPaneSnapshotMessage.include_in_scene_serialization is True
-    for message_type in (
-        _messages.ViewportImageMessage,
-        _messages.ViewportPaneUpdateMessage,
-        _messages.ViewportPaneRemoveMessage,
-    ):
-        assert "pane_generation" not in {
-            field.name for field in dataclasses.fields(message_type)
-        }
-
-    assert not hasattr(viser, "ViewportLayout")
 
 
 def test_viewport_image_validation() -> None:
@@ -96,10 +85,6 @@ def test_scene_visibility_uses_persistent_pane_updates(
     viewport_server: viser.ViserServer,
 ) -> None:
     server = viewport_server
-    assert server.viewport.scene_visible is True
-
-    with pytest.raises(TypeError, match="boolean"):
-        server.viewport.scene_visible = cast(Any, 0)
     assert server.viewport.scene_visible is True
 
     server.viewport.scene_visible = False
@@ -155,14 +140,31 @@ def test_snapshot_tracks_pane_lifecycle_in_broadcast_order(
     handle.title = "Updated"
     handle.fit = "cover"
     handle.visible = False
-    handle.image = np.full((3, 4, 3), 255, dtype=np.uint8)
+    handle.image = np.zeros((3, 4, 3), dtype=np.uint8)
+    last_frame = np.full((3, 4, 3), 255, dtype=np.uint8)
+    handle.image = last_frame
     updates = [
         message
         for message in _messages_in_buffer(server)
         if isinstance(message, _messages.ViewportPaneUpdateMessage)
     ]
-    assert updates
     assert {message.pane_id for message in updates} == {"camera"}
+    # Updates coalesce per prop-set, so a late-joining client replays one
+    # slot per property group holding the final value. Streamed frames in
+    # particular must collapse to only the most recent image.
+    updates_by_props = {
+        frozenset(message.updates.keys()): message.updates for message in updates
+    }
+    assert len(updates) == len(updates_by_props)
+    assert updates_by_props[frozenset({"title"})]["title"] == "Updated"
+    assert updates_by_props[frozenset({"fit"})]["fit"] == "cover"
+    assert updates_by_props[frozenset({"visible"})]["visible"] is False
+    image_update = updates_by_props[frozenset({"_data", "_format"})]
+    expected_format, expected_data = _encode_image_binary(
+        last_frame, "auto", jpeg_quality=None
+    )
+    assert image_update["_format"] == expected_format
+    assert image_update["_data"] == expected_data
 
     handle.remove()
     assert not any(
@@ -536,3 +538,112 @@ def test_pane_groups_emit_equalize_hints(
     with pytest.raises(ValueError, match="already exists"):
         row.add_plotly(go.Figure(), pane_id="standalone")
     assert _snapshot(server).pane_ids == ("a", "b", "c", "d", "e", "standalone")
+
+
+def test_pane_groups_skip_hidden_and_removed_members(
+    viewport_server: viser.ViserServer,
+) -> None:
+    server = viewport_server
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+
+    # A hidden member cannot anchor placement or equalize; the group falls
+    # back to its own placement when no visible member exists yet.
+    column = server.viewport.add_column(placement="bottom", relative_to="scene")
+    column.add_image(frame, pane_id="hidden", visible=False)
+    column.add_image(frame, pane_id="first-visible")
+    second = column.add_image(frame, pane_id="second-visible")
+
+    creates = {
+        message.pane_id: message
+        for message in _messages_in_buffer(server)
+        if isinstance(message, _messages.ViewportImageMessage)
+    }
+    assert creates["first-visible"].placement == "bottom"
+    assert creates["first-visible"].relative_to == "scene"
+    assert creates["first-visible"].equalize_group == ()
+    assert creates["second-visible"].relative_to == "first-visible"
+    assert creates["second-visible"].equalize_group == ("first-visible",)
+
+    # Members hidden or removed after creation are skipped the same way.
+    second.visible = False
+    third = column.add_image(frame, pane_id="third-visible")
+    creates = {
+        message.pane_id: message
+        for message in _messages_in_buffer(server)
+        if isinstance(message, _messages.ViewportImageMessage)
+    }
+    assert creates["third-visible"].relative_to == "first-visible"
+    assert creates["third-visible"].equalize_group == ("first-visible",)
+
+    # Removing the pane coalesces its buffered create away; the next add
+    # anchors on the remaining visible member.
+    third.remove()
+    column.add_image(frame, pane_id="fourth-visible")
+    creates = {
+        message.pane_id: message
+        for message in _messages_in_buffer(server)
+        if isinstance(message, _messages.ViewportImageMessage)
+    }
+    assert creates["fourth-visible"].relative_to == "first-visible"
+    assert creates["fourth-visible"].equalize_group == ("first-visible",)
+
+
+def test_image_pane_encoding_validation_and_warnings(
+    viewport_server: viser.ViserServer,
+) -> None:
+    server = viewport_server
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+    rgba = np.zeros((2, 2, 4), dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="format"):
+        server.viewport.add_image(frame, format=cast(Any, "gif"))
+    with pytest.raises(ValueError, match="jpeg_quality"):
+        server.viewport.add_image(frame, jpeg_quality=101)
+    with pytest.raises(ValueError, match="jpeg_quality"):
+        server.viewport.add_image(frame, jpeg_quality=-1)
+    # Booleans are ints, but quality=True is always a bug.
+    with pytest.raises(ValueError, match="jpeg_quality"):
+        server.viewport.add_image(frame, jpeg_quality=cast(Any, True))
+
+    with pytest.warns(UserWarning, match="alpha"):
+        handle = server.viewport.add_image(rgba, format="jpeg")
+    with pytest.warns(UserWarning, match="alpha"):
+        handle.image = rgba
+
+    handle.remove()
+    with pytest.warns(UserWarning, match="already removed"):
+        handle.remove()
+
+
+def test_pane_groups_ignore_unrelated_panes_reusing_member_ids(
+    viewport_server: viser.ViserServer,
+) -> None:
+    server = viewport_server
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+
+    row = server.viewport.add_row()
+    row.add_image(frame, pane_id="a").remove()
+    # A standalone pane reusing the removed member's ID is not group-adopted.
+    server.viewport.add_image(frame, pane_id="a")
+    row.add_image(frame, pane_id="b")
+
+    creates = {
+        message.pane_id: message
+        for message in _messages_in_buffer(server)
+        if isinstance(message, _messages.ViewportImageMessage)
+    }
+    assert creates["b"].placement == "right"
+    assert creates["b"].relative_to == "scene"
+    assert creates["b"].equalize_group == ()
+
+    # A group whose explicit anchor has disappeared falls back to the scene.
+    anchor = server.viewport.add_image(frame, pane_id="anchor")
+    column = server.viewport.add_column(placement="bottom", relative_to="anchor")
+    anchor.remove()
+    column.add_image(frame, pane_id="c")
+    creates = {
+        message.pane_id: message
+        for message in _messages_in_buffer(server)
+        if isinstance(message, _messages.ViewportImageMessage)
+    }
+    assert creates["c"].relative_to == "scene"

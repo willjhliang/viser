@@ -263,8 +263,10 @@ class GuiApi:
         self._command_handle_from_uuid: dict[str, CommandHandle] = {}
         self._current_file_upload_states: dict[str, _FileUploadState] = {}
 
-        # Set to True when plotly.min.js has been sent to client.
+        # Set to True when plotly.min.js has been sent to client. The lock
+        # keeps concurrent first adds from queueing the ~3MB payload twice.
         self._setup_plotly_js: bool = False
+        self._setup_plotly_js_lock = threading.Lock()
 
         self._websock_interface.register_handler(
             _messages.GuiUpdateMessage, self._handle_gui_updates
@@ -1104,34 +1106,39 @@ class GuiApi:
         handle.image = image
         return handle
 
-    @deprecated_positional_shim
     def _ensure_plotly_js_sent(self) -> None:
         """Send plotly.min.js to clients, once. Plotly figures cannot be
         rendered client-side until this arrives."""
-        if self._setup_plotly_js:
-            return
+        with self._setup_plotly_js_lock:
+            if self._setup_plotly_js:
+                return
 
-        # Check if plotly is installed.
-        try:
-            import plotly
-        except ImportError:
-            raise ImportError(
-                "You must have the `plotly` package installed to use the Plotly GUI element."
+            # Check if plotly is installed.
+            try:
+                import plotly
+            except ImportError:
+                raise ImportError(
+                    "You must have the `plotly` package installed to use the Plotly GUI element."
+                )
+
+            # Check that plotly.min.js exists.
+            plotly_path = (
+                Path(plotly.__file__).parent / "package_data" / "plotly.min.js"
+            )
+            assert plotly_path.exists(), (
+                f"Could not find plotly.min.js at {plotly_path}."
             )
 
-        # Check that plotly.min.js exists.
-        plotly_path = Path(plotly.__file__).parent / "package_data" / "plotly.min.js"
-        assert plotly_path.exists(), f"Could not find plotly.min.js at {plotly_path}."
+            # Send it over!
+            plotly_js = plotly_path.read_text(encoding="utf-8")
+            self._websock_interface.queue_message(
+                _messages.RunJavascriptMessage(source=plotly_js)
+            )
 
-        # Send it over!
-        plotly_js = plotly_path.read_text(encoding="utf-8")
-        self._websock_interface.queue_message(
-            _messages.RunJavascriptMessage(source=plotly_js)
-        )
+            # Update the flag so we don't send it again.
+            self._setup_plotly_js = True
 
-        # Update the flag so we don't send it again.
-        self._setup_plotly_js = True
-
+    @deprecated_positional_shim
     def add_plotly(
         self,
         figure: go.Figure,

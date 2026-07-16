@@ -2024,20 +2024,24 @@ class ViewportImageProps:
 
 
 @dataclasses.dataclass
-class ViewportImageMessage(
+class _ViewportPaneCreateMessage(
     Message,
     entity=EntityLifecycle("viewport", "create", "pane_id"),
     include_in_scene_serialization=True,
 ):
-    """Create a native image pane in the viewport workspace."""
-
     pane_id: str
-    props: ViewportImageProps
     placement: Literal["left", "right", "top", "bottom"]
     relative_to: str
     equalize_group: Tuple[str, ...]
     """Sibling pane IDs whose combined share, including this pane's, is
     redistributed equally on insertion. Empty for standalone panes."""
+
+
+@dataclasses.dataclass
+class ViewportImageMessage(_ViewportPaneCreateMessage):
+    """Create a native image pane in the viewport workspace."""
+
+    props: ViewportImageProps
 
 
 @dataclasses.dataclass
@@ -2053,20 +2057,10 @@ class ViewportPlotlyProps:
 
 
 @dataclasses.dataclass
-class ViewportPlotlyMessage(
-    Message,
-    entity=EntityLifecycle("viewport", "create", "pane_id"),
-    include_in_scene_serialization=True,
-):
+class ViewportPlotlyMessage(_ViewportPaneCreateMessage):
     """Create a native Plotly pane in the viewport workspace."""
 
-    pane_id: str
     props: ViewportPlotlyProps
-    placement: Literal["left", "right", "top", "bottom"]
-    relative_to: str
-    equalize_group: Tuple[str, ...]
-    """Sibling pane IDs whose combined share, including this pane's, is
-    redistributed equally on insertion. Empty for standalone panes."""
 
 
 @dataclasses.dataclass

@@ -113,6 +113,38 @@ describe("useViewportState browser persistence", () => {
     expect(getState().panes.image).toBeUndefined();
   });
 
+  it("keeps the saved arrangement across server-driven visibility toggles", () => {
+    const storage = new MemoryStorage();
+    const { actions, getState } = createViewportHarness(storage);
+    const storageKey = viewportLayoutStorageKey("ws://server");
+
+    actions.setPersistenceServer("ws://server");
+    actions.addImagePane(imageDeclaration("image"));
+    const swapped = dropViewportPane(
+      getState().layout,
+      "scene",
+      "image",
+      "center",
+    );
+    actions.commitUserLayout(swapped);
+    const saved = storage.values.get(storageKey);
+    expect(saved).toBeDefined();
+
+    // Hiding and re-showing the pane rearranges the in-memory layout, but
+    // must not overwrite the arrangement the user committed.
+    actions.updatePane("image", { visible: false });
+    actions.updatePane("image", { visible: true });
+    expect(storage.values.get(storageKey)).toBe(saved);
+
+    // Reconnecting restores the user's arrangement from storage.
+    actions.setPersistenceServer("ws://elsewhere");
+    actions.setPersistenceServer("ws://server");
+    expect(collectViewportPaneIds(getState().layout)).toEqual([
+      "image",
+      "scene",
+    ]);
+  });
+
   it("repairs malformed stored layouts without throwing", () => {
     const storage = new MemoryStorage();
     storage.values.set(viewportLayoutStorageKey("ws://broken"), "not json");
@@ -248,9 +280,7 @@ describe("useViewportState pane lifecycle", () => {
     actions.updatePane("first", { visible: true });
     expect(collectViewportPaneIds(getState().layout)).toEqual(["first"]);
 
-    actions.addImagePane(
-      imageDeclaration("second", { relative_to: "scene" }),
-    );
+    actions.addImagePane(imageDeclaration("second", { relative_to: "scene" }));
     expect(collectViewportPaneIds(getState().layout)).toEqual([
       "first",
       "second",
@@ -261,9 +291,7 @@ describe("useViewportState pane lifecycle", () => {
     expect(collectViewportPaneIds(getState().layout)).toEqual(["scene"]);
 
     actions.addImagePane(imageDeclaration("replacement"));
-    expect(collectViewportPaneIds(getState().layout)).toEqual([
-      "replacement",
-    ]);
+    expect(collectViewportPaneIds(getState().layout)).toEqual(["replacement"]);
   });
 
   it("hides and restores the scene after images arrive", () => {

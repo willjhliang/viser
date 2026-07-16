@@ -9,7 +9,7 @@ import threading
 import uuid
 import warnings
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Dict, Generic, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 import numpy as np
 from typing_extensions import TypeAlias
@@ -28,6 +28,10 @@ ViewportPaneFit: TypeAlias = Literal["contain", "cover", "fill"]
 ViewportPanePlacement: TypeAlias = Literal["left", "right", "top", "bottom"]
 
 
+_stock_plotly_template_json: dict[str, Any] | None = None
+_theme_templates_json: str | None = None
+
+
 def _plotly_json_for_pane(figure: go.Figure, config: Mapping[str, Any] | None) -> str:
     """Serialize a figure for a viewport pane.
 
@@ -40,10 +44,13 @@ def _plotly_json_for_pane(figure: go.Figure, config: Mapping[str, Any] | None) -
     """
     import plotly.io as pio
 
+    global _stock_plotly_template_json
+    if _stock_plotly_template_json is None:
+        _stock_plotly_template_json = pio.templates["plotly"].to_plotly_json()
+
     json_str = _plotly_json_with_config(figure, config)
     template = figure.layout.template
-    stock_template = pio.templates["plotly"]
-    if template is None or template.to_plotly_json() == stock_template.to_plotly_json():
+    if template is None or template.to_plotly_json() == _stock_plotly_template_json:
         plot_dict = json.loads(json_str)
         plot_dict.get("layout", {}).pop("template", None)
         json_str = json.dumps(plot_dict)
@@ -56,12 +63,15 @@ def _plotly_theme_templates_json() -> str:
     light mode, "plotly_dark" in dark mode."""
     import plotly.io as pio
 
-    return json.dumps(
-        {
-            "light": pio.templates["plotly_white"].to_plotly_json(),
-            "dark": pio.templates["plotly_dark"].to_plotly_json(),
-        }
-    )
+    global _theme_templates_json
+    if _theme_templates_json is None:
+        _theme_templates_json = json.dumps(
+            {
+                "light": pio.templates["plotly_white"].to_plotly_json(),
+                "dark": pio.templates["plotly_dark"].to_plotly_json(),
+            }
+        )
+    return _theme_templates_json
 
 
 @dataclasses.dataclass
@@ -99,7 +109,7 @@ class _ViewportPaneHandle(Generic[_PaneStateT]):
         if self._impl.removed:
             raise RuntimeError(f"Cannot update a removed {type(self).__name__}.")
 
-    def _queue_update(self, updates: Dict[str, Any]) -> None:
+    def _queue_update(self, updates: dict[str, Any]) -> None:
         self._impl.api._websock_interface.queue_message(
             _messages.ViewportPaneUpdateMessage(
                 pane_id=self._impl.pane_id,
@@ -122,8 +132,6 @@ class _ViewportPaneHandle(Generic[_PaneStateT]):
     @title.setter
     def title(self, value: str) -> None:
         self._check_not_removed()
-        if not isinstance(value, str):
-            raise TypeError("Viewport pane title must be a string.")
         with self._impl.api._lock:
             self._check_not_removed()
             if value == self._impl.props.title:
@@ -140,8 +148,6 @@ class _ViewportPaneHandle(Generic[_PaneStateT]):
     @visible.setter
     def visible(self, value: bool) -> None:
         self._check_not_removed()
-        if not isinstance(value, bool):
-            raise TypeError("Viewport pane visibility must be a boolean.")
         with self._impl.api._lock:
             self._check_not_removed()
             if value == self._impl.props.visible:
@@ -198,7 +204,7 @@ class ViewportImageHandle(_ViewportPaneHandle[_ViewportImageHandleState]):
             # Encoding can be expensive. Recheck after taking the lock so a
             # concurrent remove cannot queue an update for a reused pane ID.
             self._check_not_removed()
-            self._impl.image = image.copy()
+            self._impl.image = image
             self._impl.props._format = resolved_format
             self._impl.props._data = data
             self._queue_update({"_format": resolved_format, "_data": data})
@@ -252,9 +258,10 @@ class ViewportPaneGroup:
     Returned by :meth:`ViewportApi.add_row` and :meth:`ViewportApi.add_column`.
     Each pane added through the group is placed along the group's axis and the
     group re-divides its combined space equally, without disturbing panes
-    outside the group. The group only shapes creation-time placement: panes it
-    creates are ordinary panes afterwards, and browser-saved arrangements
-    still take precedence on reload.
+    outside the group. The group only shapes creation-time placement: creating
+    it sends nothing to clients, panes it creates are ordinary panes
+    afterwards, and browser-saved arrangements still take precedence on
+    reload.
     """
 
     def __init__(
@@ -268,17 +275,36 @@ class ViewportPaneGroup:
         self._axis: Literal["row", "column"] = axis
         self._placement: ViewportPanePlacement = placement
         self._relative_to = relative_to
-        self._member_ids: list[str] = []
+        self._members: list[_ViewportPaneHandle[Any]] = []
 
     def _next_declaration(
         self,
     ) -> tuple[ViewportPanePlacement, str, tuple[str, ...]]:
-        """Placement hints for the group's next pane."""
+        """Placement hints for the group's next pane.
 
-        if not self._member_ids:
-            return self._placement, self._relative_to, ()
+        Hidden and removed members cannot anchor placement or take part in
+        equalization, so the next pane attaches to the group's last member
+        that is still visible; when none remain, it falls back to the group's
+        own placement, like a first pane. Membership is checked by handle
+        identity so an unrelated pane reusing a removed member's ID is not
+        adopted into the group.
+        """
+
+        members = [
+            handle.pane_id
+            for handle in self._members
+            if self._api._handle_from_pane_id.get(handle.pane_id) is handle
+            and handle.visible
+        ]
+        if not members:
+            relative_to = (
+                self._relative_to
+                if self._relative_to in self._api._visible_pane_ids()
+                else self._api.scene_pane_id
+            )
+            return self._placement, relative_to, ()
         placement: ViewportPanePlacement = "right" if self._axis == "row" else "bottom"
-        return placement, self._member_ids[-1], tuple(self._member_ids)
+        return placement, members[-1], tuple(members)
 
     def add_image(
         self,
@@ -295,20 +321,21 @@ class ViewportPaneGroup:
         :meth:`ViewportApi.add_image`, minus placement, which the group
         owns."""
 
-        placement, relative_to, equalize_group = self._next_declaration()
-        handle = self._api._add_image(
-            image,
-            pane_id=pane_id,
-            title=title,
-            format=format,
-            jpeg_quality=jpeg_quality,
-            fit=fit,
-            visible=visible,
-            placement=placement,
-            relative_to=relative_to,
-            equalize_group=equalize_group,
-        )
-        self._member_ids.append(handle.pane_id)
+        with self._api._lock:
+            placement, relative_to, equalize_group = self._next_declaration()
+            handle = self._api._add_image(
+                image,
+                pane_id=pane_id,
+                title=title,
+                format=format,
+                jpeg_quality=jpeg_quality,
+                fit=fit,
+                visible=visible,
+                placement=placement,
+                relative_to=relative_to,
+                equalize_group=equalize_group,
+            )
+            self._members.append(handle)
         return handle
 
     def add_plotly(
@@ -324,18 +351,19 @@ class ViewportPaneGroup:
         :meth:`ViewportApi.add_plotly`, minus placement, which the group
         owns."""
 
-        placement, relative_to, equalize_group = self._next_declaration()
-        handle = self._api._add_plotly(
-            figure,
-            config=config,
-            pane_id=pane_id,
-            title=title,
-            visible=visible,
-            placement=placement,
-            relative_to=relative_to,
-            equalize_group=equalize_group,
-        )
-        self._member_ids.append(handle.pane_id)
+        with self._api._lock:
+            placement, relative_to, equalize_group = self._next_declaration()
+            handle = self._api._add_plotly(
+                figure,
+                config=config,
+                pane_id=pane_id,
+                title=title,
+                visible=visible,
+                placement=placement,
+                relative_to=relative_to,
+                equalize_group=equalize_group,
+            )
+            self._members.append(handle)
         return handle
 
 
@@ -361,8 +389,6 @@ class ViewportApi:
 
     @scene_visible.setter
     def scene_visible(self, value: bool) -> None:
-        if not isinstance(value, bool):
-            raise TypeError("Viewport scene visibility must be a boolean.")
         with self._lock:
             if value == self._scene_visible:
                 return
@@ -381,6 +407,9 @@ class ViewportApi:
             return tuple(self._handle_from_pane_id)
 
     def _visible_pane_ids(self) -> set[str]:
+        # The scene pane is always a valid placement anchor, even while
+        # hidden: it is the browser's empty-workspace fallback, and the
+        # client degrades gracefully when the anchor is not in its layout.
         return {self.scene_pane_id} | {
             handle.pane_id
             for handle in self._handle_from_pane_id.values()
@@ -397,10 +426,7 @@ class ViewportApi:
     def _validate_pane_declaration(
         self,
         pane_id: str | None,
-        title: str,
-        visible: bool,
         placement: ViewportPanePlacement,
-        relative_to: str,
     ) -> str:
         """Validate shared pane arguments and return the resolved pane ID."""
 
@@ -412,14 +438,8 @@ class ViewportApi:
             raise ValueError("Viewport pane ID must not be empty.")
         if pane_id == self.scene_pane_id:
             raise ValueError(f"Viewport pane ID {pane_id!r} is reserved.")
-        if not isinstance(title, str):
-            raise TypeError("Viewport pane title must be a string.")
-        if not isinstance(visible, bool):
-            raise TypeError("Viewport pane visibility must be a boolean.")
         if placement not in ("left", "right", "top", "bottom"):
             raise ValueError("placement must be left, right, top, or bottom.")
-        if not isinstance(relative_to, str):
-            raise TypeError("relative_to must be a viewport pane ID string.")
         return pane_id
 
     def _register_pane(
@@ -507,9 +527,7 @@ class ViewportApi:
         equalize_group: tuple[str, ...],
     ) -> ViewportImageHandle:
         image = _validate_image(image)
-        pane_id = self._validate_pane_declaration(
-            pane_id, title, visible, placement, relative_to
-        )
+        pane_id = self._validate_pane_declaration(pane_id, placement)
         if format not in ("auto", "png", "jpeg"):
             raise ValueError("format must be 'auto', 'png', or 'jpeg'.")
         if jpeg_quality is not None and (
@@ -522,7 +540,9 @@ class ViewportApi:
         if format == "jpeg" and image.shape[2] == 4:
             warnings.warn(
                 "Encoding an RGBA viewport image as JPEG discards its alpha channel.",
-                stacklevel=2,
+                # Both public entry points (add_image, group add_image) are
+                # one frame above; point the warning at the user's call.
+                stacklevel=3,
             )
 
         resolved_format, data = _encode_image_binary(
@@ -540,7 +560,7 @@ class ViewportApi:
                 pane_id=pane_id,
                 props=copy.deepcopy(props),
                 api=self,
-                image=image.copy(),
+                image=image,
                 requested_format=format,
                 jpeg_quality=jpeg_quality,
             )
@@ -583,8 +603,10 @@ class ViewportApi:
         a template matched to each viewer's theme: "plotly_white" when viser
         is in light mode and "plotly_dark" in dark mode, tracking the
         browser's current setting live (including automatically chosen
-        themes). Set any template explicitly on the figure (or change
-        ``plotly.io.templates.default``) to override this.
+        themes). Set any other template explicitly on the figure (or change
+        ``plotly.io.templates.default``) to override this; assigning the
+        stock "plotly" template itself is indistinguishable from the default
+        and stays theme-aware.
 
         Args:
             figure: Plotly figure to display. Assign to the returned handle's
@@ -628,9 +650,7 @@ class ViewportApi:
         relative_to: str,
         equalize_group: tuple[str, ...],
     ) -> ViewportPlotlyHandle:
-        pane_id = self._validate_pane_declaration(
-            pane_id, title, visible, placement, relative_to
-        )
+        pane_id = self._validate_pane_declaration(pane_id, placement)
 
         # Clients cannot render the figure until plotly.min.js has been sent.
         # This must be queued before the pane creation message.
@@ -676,7 +696,9 @@ class ViewportApi:
 
         Panes added through the returned group's ``add_image`` and
         ``add_plotly`` methods are placed along a shared row and re-divided
-        equally on each addition, so three panes yield exact thirds. The
+        equally on each addition, so three panes yield exact thirds. (Divisions
+        snap to the workspace grid; in workspaces small enough that minimum
+        pane sizes dominate, they are as equal as the grid allows.) The
         placement arguments position the group's first pane; like all
         placement hints, they only apply when the browser has no saved
         arrangement for these panes.

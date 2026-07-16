@@ -48,6 +48,20 @@ export function normalizeViewportWeights(
 ): number[] {
   if (!Number.isInteger(childCount) || childCount <= 0) return [];
 
+  // Already-normalized weights pass through bit-identical, so repeated
+  // normalization (reconnect reconciles, scene visibility passes) cannot
+  // introduce epsilon drift that defeats layout equality checks.
+  if (
+    weights.length === childCount &&
+    weights.every(isPositiveFinite) &&
+    Math.abs(
+      (weights as readonly number[]).reduce((sum, weight) => sum + weight, 0) -
+        1,
+    ) <= 1e-12
+  ) {
+    return [...(weights as readonly number[])];
+  }
+
   const sanitized = Array.from({ length: childCount }, (_, index) => {
     const weight = weights[index];
     return isPositiveFinite(weight) ? weight : 1;
@@ -215,11 +229,7 @@ export function normalizeViewportLayout(value: unknown): ViewportLayout {
     layout =
       layout === null
         ? pane(VIEWPORT_SCENE_PANE_ID)
-        : makeSplit(
-            "row",
-            [pane(VIEWPORT_SCENE_PANE_ID), layout],
-            [1, 1],
-          );
+        : makeSplit("row", [pane(VIEWPORT_SCENE_PANE_ID), layout], [1, 1]);
   }
   return { version: 1, root: layout! };
 }
@@ -626,10 +636,9 @@ function equalizePanesInNode(
   const children = node.children.map((child) =>
     equalizePanesInNode(child, paneIds),
   );
-  let result =
-    children.every((child, index) => child === node.children[index])
-      ? node
-      : { ...node, children };
+  let result = children.every((child, index) => child === node.children[index])
+    ? node
+    : { ...node, children };
 
   const memberIndices = result.children.flatMap((child, index) =>
     child.type === "pane" && paneIds.has(child.pane_id) ? [index] : [],

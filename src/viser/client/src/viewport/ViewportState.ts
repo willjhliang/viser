@@ -176,9 +176,7 @@ function retainedPaneIds(
 function scenePaneIsVisible(panes: Record<string, ViewportPane>): boolean {
   const scenePane = panes[VIEWPORT_SCENE_PANE_ID];
   return (
-    scenePane === undefined ||
-    scenePane.kind !== "scene" ||
-    scenePane.visible
+    scenePane === undefined || scenePane.kind !== "scene" || scenePane.visible
   );
 }
 
@@ -221,9 +219,17 @@ export function useViewportState(
       }
     };
 
-    const commitLayout = (layout: ViewportLayout): boolean => {
+    // Server-driven mutations (pane creates, visibility toggles, removals)
+    // change the layout in memory only: persisting them would overwrite the
+    // user's saved arrangement, e.g. a visibility round-trip would durably
+    // lose the pane's position. Storage is written only for user gestures
+    // and for authoritative snapshot reconciliation.
+    const commitLayout = (
+      layout: ViewportLayout,
+      options?: { persist: boolean },
+    ): boolean => {
       if (sameViewportLayout(layout, store.get().layout)) return false;
-      persistLayout(layout);
+      if (options?.persist) persistLayout(layout);
       return true;
     };
 
@@ -415,8 +421,7 @@ export function useViewportState(
       setPaneSnapshot: (paneIds) => {
         const authoritativePaneIds = new Set(
           paneIds.filter(
-            (paneId) =>
-              paneId.length > 0 && paneId !== VIEWPORT_SCENE_PANE_ID,
+            (paneId) => paneId.length > 0 && paneId !== VIEWPORT_SCENE_PANE_ID,
           ),
         );
         authoritativePaneIdsRef.current = authoritativePaneIds;
@@ -439,6 +444,10 @@ export function useViewportState(
           panes,
           authoritativePaneIds,
         );
+        // The snapshot is the authoritative reconciliation point: persist
+        // even when the in-memory layout already reflects it, since earlier
+        // server-driven mutations (creates, removals) deliberately don't.
+        persistLayout(layout);
         if (commitLayout(layout)) store.set({ panes, layout });
         else store.set({ panes });
       },
@@ -451,7 +460,7 @@ export function useViewportState(
           state.panes,
           authoritativePaneIdsRef.current,
         );
-        if (commitLayout(layout)) store.set({ layout });
+        if (commitLayout(layout, { persist: true })) store.set({ layout });
       },
     };
   }, [storage, store]);

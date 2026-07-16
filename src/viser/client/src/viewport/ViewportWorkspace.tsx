@@ -201,6 +201,7 @@ export function ViewportWorkspace({
   const [gestureView, setGestureView] = React.useState<{
     kind: WorkspaceGesture["kind"];
     grid: GridSpec;
+    startLayout: ViewportLayout;
   } | null>(null);
   const [dragIndicator, setDragIndicator] =
     React.useState<PaneDragIndicator | null>(null);
@@ -214,8 +215,17 @@ export function ViewportWorkspace({
     : undefined;
 
   const displayLayout = draftLayout ?? layout;
-  const grid =
-    gestureView?.grid ?? gridSpecForLayout(displayLayout, workspaceSize);
+  // The locked gesture grid is only valid for the layout the gesture started
+  // from. A server-driven layout change can land one render before the
+  // cancellation effect runs; falling back to a fresh grid keeps that render
+  // from violating the new layout's subtree minima.
+  const gestureGridIsCurrent =
+    gestureView !== null &&
+    (draftLayout !== null ||
+      sameViewportLayout(gestureView.startLayout, layout));
+  const grid = gestureGridIsCurrent
+    ? gestureView.grid
+    : gridSpecForLayout(displayLayout, workspaceSize);
   const geometry = React.useMemo(
     () => computeLayoutGeometry(displayLayout.root, grid.columns, grid.rows),
     [displayLayout.root, grid.columns, grid.rows],
@@ -432,7 +442,7 @@ export function ViewportWorkspace({
         lastCandidate: null,
         lastHint: null,
       };
-      setGestureView({ kind: "pane", grid: gestureGrid });
+      setGestureView({ kind: "pane", grid: gestureGrid, startLayout: layout });
     },
     [grid, interactionEpoch, layout, workspaceSize],
   );
@@ -536,7 +546,7 @@ export function ViewportWorkspace({
         lastValidLayout: layout,
         lastGridLine: divider.coordinate,
       };
-      setGestureView({ kind: "divider", grid });
+      setGestureView({ kind: "divider", grid, startLayout: layout });
     },
     [grid, interactionEpoch, layout, workspaceSize],
   );
@@ -575,7 +585,11 @@ export function ViewportWorkspace({
         !sameViewportLayout(currentViewport.layout, gesture.startLayout);
       const axisName = gesture.divider.direction === "row" ? "column" : "row";
       clearGesture();
-      if (cancelled || stale || sameViewportLayout(nextLayout, gesture.startLayout)) {
+      if (
+        cancelled ||
+        stale ||
+        sameViewportLayout(nextLayout, gesture.startLayout)
+      ) {
         return;
       }
       viewer.viewportActions.commitUserLayout(nextLayout);
@@ -846,6 +860,8 @@ function ViewportPaneHost({
   const viewer = React.useContext(ViewerContext)!;
   const pane = viewer.useViewport((state) => state.panes[paneId]);
   const [isHovered, setIsHovered] = React.useState(false);
+  // Keyboard users can focus the header without hovering; keep it visible.
+  const [isFocused, setIsFocused] = React.useState(false);
   if (pane === undefined) return null;
 
   const isHiddenSceneHost = rect === null;
@@ -872,9 +888,10 @@ function ViewportPaneHost({
         minHeight: 0,
         overflow: "hidden",
         boxSizing: "border-box",
-        border: hideChrome || isHiddenSceneHost
-          ? undefined
-          : `${PANE_BORDER_SIZE_PX}px solid var(--mantine-color-default-border)`,
+        border:
+          hideChrome || isHiddenSceneHost
+            ? undefined
+            : `${PANE_BORDER_SIZE_PX}px solid var(--mantine-color-default-border)`,
         borderRadius:
           hideChrome || isHiddenSceneHost ? 0 : "var(--mantine-radius-sm)",
         background: "var(--mantine-color-body)",
@@ -911,6 +928,8 @@ function ViewportPaneHost({
           aria-keyshortcuts="Shift+ArrowLeft Shift+ArrowRight Shift+ArrowUp Shift+ArrowDown"
           aria-roledescription="movable split pane"
           onKeyDown={(event) => onHeaderKeyDown(event, paneId)}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
           onPointerMove={onHeaderPointerMove}
           onPointerUp={onHeaderPointerUp}
           onPointerCancel={onHeaderPointerCancel}
@@ -923,7 +942,7 @@ function ViewportPaneHost({
             zIndex: 20,
             width: "max-content",
             maxWidth: "calc(100% - 0.5em)",
-            opacity: isHovered && !isDragging ? 1 : 0,
+            opacity: (isHovered || isFocused) && !isDragging ? 1 : 0,
             transition: motionEnabled ? "opacity 250ms ease-in-out" : undefined,
             userSelect: "none",
             cursor: isDragging ? "grabbing" : "grab",
@@ -1051,19 +1070,23 @@ interface PaneRendererProps {
   sceneContent: React.ReactNode;
 }
 
-const paneRendererRegistry: Record<
-  ViewportPane["kind"],
-  React.ComponentType<PaneRendererProps>
-> = {
+const paneRendererRegistry: {
+  [K in ViewportPane["kind"]]: React.ComponentType<{
+    pane: Extract<ViewportPane, { kind: K }>;
+    sceneContent: React.ReactNode;
+  }>;
+} = {
   scene: ({ sceneContent }) => <>{sceneContent}</>,
-  image: ({ pane }) =>
-    pane.kind === "image" ? <ViewportImageRenderer pane={pane} /> : null,
-  plotly: ({ pane }) =>
-    pane.kind === "plotly" ? <ViewportPlotlyRenderer pane={pane} /> : null,
+  image: ({ pane }) => <ViewportImageRenderer pane={pane} />,
+  plotly: ({ pane }) => <ViewportPlotlyRenderer pane={pane} />,
 };
 
 function ViewportPaneRenderer(props: PaneRendererProps) {
-  const Renderer = paneRendererRegistry[props.pane.kind];
+  // The registry key and the pane's kind agree by construction, which the
+  // type system cannot correlate through the union.
+  const Renderer = paneRendererRegistry[
+    props.pane.kind
+  ] as React.ComponentType<PaneRendererProps>;
   return <Renderer {...props} />;
 }
 
@@ -1102,10 +1125,16 @@ function ViewportPlotlyRenderer({ pane }: { pane: ViewportPlotlyPane }) {
       ? undefined
       : (themeTemplates[colorScheme] ?? themeTemplates.light));
 
+  const [plotlyMissing, setPlotlyMissing] = React.useState(false);
+  // The retry budget lives outside the effect so streamed figure updates and
+  // resizes, which re-run it, cannot restart the clock indefinitely.
+  const plotlyRetriesRef = React.useRef(200); // ~10 seconds at 50ms.
   React.useEffect(() => {
     if (plotJson === null || width === 0 || height === 0) return;
     // Plotly is loaded globally by a RunJavascriptMessage that the server
     // queues before any Plotly pane; poll briefly in case a render races it.
+    // If it never arrives (blocked or failed eval), stop polling and show a
+    // fallback instead of spinning forever.
     let cancelled = false;
     const render = () => {
       if (cancelled || plotRef.current === null) return;
@@ -1117,26 +1146,39 @@ function ViewportPlotlyRenderer({ pane }: { pane: ViewportPlotlyPane }) {
               data: unknown,
               layout: unknown,
               config: unknown,
-            ): void;
+            ): unknown;
           };
         }
       ).Plotly;
       if (plotly === undefined) {
+        if (plotlyRetriesRef.current-- <= 0) {
+          setPlotlyMissing(true);
+          return;
+        }
         setTimeout(render, 50);
         return;
       }
-      plotly.react(
-        plotRef.current,
-        plotJson.data,
-        {
-          ...plotJson.layout,
-          template: layoutTemplate,
-          width,
-          height,
-          autosize: false,
-        },
-        plotJson.config,
-      );
+      setPlotlyMissing(false);
+      // A malformed figure must not take down the workspace; Plotly.react
+      // reports errors both synchronously and as a rejected promise.
+      try {
+        Promise.resolve(
+          plotly.react(
+            plotRef.current,
+            plotJson.data,
+            {
+              ...plotJson.layout,
+              template: layoutTemplate,
+              width,
+              height,
+              autosize: false,
+            },
+            plotJson.config,
+          ),
+        ).catch((error) => console.error("Plotly render failed:", error));
+      } catch (error) {
+        console.error("Plotly render failed:", error);
+      }
     };
     render();
     return () => {
@@ -1169,6 +1211,21 @@ function ViewportPlotlyRenderer({ pane }: { pane: ViewportPlotlyPane }) {
       }}
     >
       <div ref={plotRef} />
+      {plotlyMissing ? (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--mantine-color-dimmed)",
+            fontSize: "0.8rem",
+          }}
+        >
+          Plotly failed to load.
+        </div>
+      ) : null}
     </div>
   );
 }
